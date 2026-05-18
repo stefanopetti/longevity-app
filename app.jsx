@@ -39,7 +39,7 @@ const FS = {
 
 // ============ DATA ============
 const DEFAULT_PROFILE = {
-  name: '', age: '53', weight: '', height: '',
+  name: '', age: '', weight: '', height: '',
   hrMax: '',
   omega3: '', magnesium: '', creatine: '', vitD: '', otherSupp: '',
   cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '', bloodDate: ''
@@ -1685,7 +1685,7 @@ const ProfileTab = ({ profile, saveProfile, onReport, onReset, onExport, onImpor
       )}
 
       <Section title="Anagrafica" open={open.bio} toggle={() => setOpen(s => ({ ...s, bio: !s.bio }))}>
-        <Field label="Nome (per saluto in home)" value={profile.name} unit="" onChange={v => update('name', v)} type="text" placeholder="Stefano" />
+        <Field label="Nome (per saluto in home)" value={profile.name} unit="" onChange={v => update('name', v)} type="text" placeholder="Il tuo nome" />
         <Field label="Età" value={profile.age} unit="anni" onChange={v => update('age', v)} type="number" />
         <Field label="Peso" value={profile.weight} unit="kg" onChange={v => update('weight', v)} type="number" placeholder="Aggiorna anche in Misure" />
         <Field label="Altezza" value={profile.height} unit="cm" onChange={v => update('height', v)} type="number" />
