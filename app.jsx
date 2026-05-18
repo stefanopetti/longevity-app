@@ -380,7 +380,7 @@ const suggestNextSession = (exerciseName, history) => {
   const validSets = lastEx.sets.filter(s => s.reps && s.weight !== undefined);
   if (validSets.length === 0) return null;
 
-  const maxWeight = Math.max(...validSets.map(s => parseFloat(s.weight) || 0));
+  const maxWeight = Math.max(...validSets.map(s => parseDecimal(s.weight)));
   const allTopRange = validSets.every(s => parseInt(s.reps) >= range[1] && (s.rir ?? 2) >= 2);
   const someUnder = validSets.some(s => parseInt(s.reps) < range[0] || (s.rir ?? 2) <= 0);
   const avgReps = Math.round(validSets.reduce((a, s) => a + (parseInt(s.reps) || 0), 0) / validSets.length);
@@ -432,7 +432,7 @@ const checkAdjustments = (history, dailyLogs, dismissedAlerts) => {
     if (sessions.length >= 3) {
       const maxes = sessions.map(s => {
         const ex = s.exercises.find(e => e.name === lift);
-        return Math.max(...(ex.sets || []).map(st => parseFloat(st.weight) || 0));
+        return Math.max(...(ex.sets || []).map(st => parseDecimal(st.weight)));
       });
       const allSame = maxes.every(m => m === maxes[0]) && maxes[0] > 0;
       if (allSame) {
@@ -556,7 +556,7 @@ const getPRs = (history) => {
     all.forEach(w => {
       const ex = w.exercises.find(e => e.name === lift);
       (ex.sets || []).forEach(s => {
-        const w_ = parseFloat(s.weight) || 0;
+        const w_ = parseDecimal(s.weight);
         const r = parseInt(s.reps) || 0;
         if (w_ > maxW || (w_ === maxW && r > maxReps)) { maxW = w_; maxReps = r; }
       });
@@ -1920,10 +1920,10 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
     r += `### ${lift}\n`;
     sessions.forEach(s => {
       const ex = s.exercises.find(e => e.name === lift);
-      const maxL = Math.max(...(ex.sets || []).map(st => parseFloat(st.weight) || 0));
+      const maxL = Math.max(...(ex.sets || []).map(st => parseDecimal(st.weight)));
       const avgRir = avg((ex.sets || []).map(st => st.rir).filter(v => v !== undefined && v !== null));
       const totReps = (ex.sets || []).reduce((a, st) => a + (parseInt(st.reps) || 0), 0);
-      r += `- ${new Date(s.date).toLocaleDateString('it-IT')}: max ${maxL}kg · ${totReps} reps · RIR ${avgRir.toFixed(1)} · sens ${ex.feeling || '—'}/10\n`;
+      r += `- ${new Date(s.date).toLocaleDateString('it-IT')}: max ${maxL}kg · ${totReps} reps · RIR ${avgRir.toFixed(1)} · sens ${s.feeling || '—'}/10\n`;
     });
   });
 
