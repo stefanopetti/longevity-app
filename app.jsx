@@ -51,6 +51,10 @@ const GLOSSARY = {
     title: 'RIR — Reps in Reserve',
     body: 'Quante ripetizioni potresti ancora fare prima del cedimento.\n\nÈ il metrico più importante per la longevità: lavorare a RIR 1-3 dà ipertrofia e forza riducendo il rischio infortuni rispetto al cedimento totale.\n\nPer te a 53 anni: target RIR 2 (ferma 2 reps prima del cedimento).'
   },
+  Sensazione: {
+    title: 'Sensazione sessione',
+    body: 'Valutazione soggettiva 1-10 di come è andata la sessione complessivamente.\n\n• 1-3 = Malissimo · stanchezza eccessiva, infortuni, pessima performance\n• 4-6 = Normale · seduta standard, nulla di particolare\n• 7-8 = Bene · buone performance, sentito carico giusto\n• 9-10 = Ottimo · sessione eccezionale, recupero perfetto\n\nCattura giornate buone/scarse che i numeri non vedono. Usa insieme a carichi e reps per capire il vero stato della forma.'
+  },
   VO2max: {
     title: 'VO2max',
     body: 'Volume massimo di ossigeno consumato per kg di peso al minuto (ml/kg/min).\n\nÈ il singolo miglior predittore di mortalità all-cause. Range:\n• <30: a rischio\n• 35-45: buono\n• >45: ottimo per la tua età\n\nLo trovi nell\'app Salute → Cardio Fitness.'
@@ -298,6 +302,7 @@ const alertIntense = () => { playBeep(1200, 150); setTimeout(() => playBeep(1200
 
 // ============ UTILS ============
 const fmtTime = (s) => { const m = Math.floor(s / 60), sec = s % 60; return `${m}:${sec.toString().padStart(2, '0')}`; };
+const parseDecimal = (v) => parseFloat(String(v).replace(',', '.')) || 0;
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
 
@@ -601,7 +606,12 @@ const inputStyle = { width: '100%', backgroundColor: 'rgba(255,255,255,0.05)', b
 
 // ============ TOOLTIP (popup tap-to-open) ============
 const InfoButton = ({ glossKey, onClick }) => (
-  <button onClick={(e) => { e.stopPropagation(); onClick(glossKey); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', padding: 4, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}>
+  <button
+    onClick={(e) => { e.stopPropagation(); onClick(glossKey); }}
+    onMouseDown={(e) => e.preventDefault()}
+    onTouchStart={(e) => e.preventDefault()}
+    style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', padding: 4, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle', zIndex: 10 }}
+  >
     <Info size={16} />
   </button>
 );
@@ -972,9 +982,8 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
       lastPerf: lastEx ? { sets: lastEx.sets } : null,
       suggestion,
       sets: Array.from({ length: ex.sets }, (_, j) => ({
-        weight: '', reps: '', rir: 2
-      })),
-      feeling: 5
+        weight: lastEx?.sets?.[j]?.weight || '', reps: lastEx?.sets?.[j]?.reps || '', rir: 2, isPreFilled: !!lastEx
+      }))
     };
   });
 
@@ -982,6 +991,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
   const [phase, setPhase] = useState('warmup');
   const [restRemaining, setRestRemaining] = useState(0);
   const [restActive, setRestActive] = useState(false);
+  const [sessionFeeling, setSessionFeeling] = useState(5);
   const restRef = useRef(null);
 
   useEffect(() => {
@@ -990,13 +1000,13 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
     return () => clearTimeout(restRef.current);
   }, [restActive, restRemaining]);
 
-  const updateSet = (ei, si, field, v) => setExercises(p => p.map((ex, i) => i === ei ? { ...ex, sets: ex.sets.map((s, j) => j === si ? { ...s, [field]: v } : s) } : ex));
+  const updateSet = (ei, si, field, v) => setExercises(p => p.map((ex, i) => i === ei ? { ...ex, sets: ex.sets.map((s, j) => j === si ? { ...s, [field]: v, isPreFilled: false } : s) } : ex));
   const updateEx = (ei, field, v) => setExercises(p => p.map((ex, i) => i === ei ? { ...ex, [field]: v } : ex));
   const startRest = (sec) => { setRestRemaining(sec); setRestActive(true); playBeep(660, 100, 0.3); };
   const skipRest = () => { setRestActive(false); setRestRemaining(0); clearTimeout(restRef.current); };
 
   const saveSession = async () => {
-    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, exercises: exercises.map(ex => ({ name: ex.name, sets: ex.sets, feeling: ex.feeling })) };
+    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, exercises: exercises.map(ex => ({ name: ex.name, sets: ex.sets.map(s => ({ weight: s.weight, reps: s.reps, rir: s.rir })) })), feeling: sessionFeeling };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     onExit();
   };
@@ -1032,11 +1042,10 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
               <div style={label}>Esercizio {ei + 1}</div>
               <div style={{ fontSize: FS.lg, fontWeight: 600, marginTop: 4 }}>{ex.name}</div>
               <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.5)', marginTop: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
-                {ex.sets.length} serie × {ex.repsRange[0]}-{ex.repsRange[1]} {ex.type === 'time' ? 'sec' : 'reps'} · RIR {ex.rir}
+                {ex.sets.length} × {ex.repsRange[0]}-{ex.repsRange[1]} reps · RIR {ex.rir}
                 <InfoButton glossKey="RIR" onClick={onGloss} />
-                · rec {ex.rest}s
+                {ex.note && <ExerciseNoteButton note={ex.note} />}
               </div>
-              {ex.note && <div style={{ fontSize: FS.xs, color: '#84cc16', marginTop: 6, fontStyle: 'italic' }}>💡 {ex.note}</div>}
 
               {/* SUGGERIMENTO TARGET (Double progression) */}
               {ex.suggestion && (
@@ -1052,10 +1061,10 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
                 </div>
               )}
 
-              {/* LAST PERFORMANCE */}
-              {ex.lastPerf && (
-                <div style={{ marginTop: 8, fontSize: FS.xs, color: 'rgba(255,255,255,0.5)' }}>
-                  📊 Ultima volta: {ex.lastPerf.sets.map((s, i) => `${s.weight || 'BW'}${ex.type === 'weighted' ? 'kg' : ''}×${s.reps || '—'}${s.rir !== undefined ? `(R${s.rir})` : ''}`).join(' · ')}
+              {/* PRECOMPILAZIONE NOTA */}
+              {ex.lastPerf && ex.sets.some(s => s.isPreFilled) && (
+                <div style={{ marginTop: 10, padding: 10, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.6)', fontStyle: 'italic' }}>↓ Valori pre-compilati dall'ultima sessione · sovrascrivili</div>
                 </div>
               )}
             </div>
@@ -1065,8 +1074,8 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
                 <div key={si} style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'stretch', gap: 8, marginBottom: 10 }}>
                     <div style={{ fontSize: FS.base, color: '#fff', width: 32, fontWeight: 700, display: 'flex', alignItems: 'center' }}>S{si + 1}</div>
-                    {ex.type === 'weighted' && <BigNumberInput value={s.weight} onChange={v => updateSet(ei, si, 'weight', v)} step={1.25} placeholder="0" unit="kg" />}
-                    <BigNumberInput value={s.reps} onChange={v => updateSet(ei, si, 'reps', v)} step={1} placeholder="0" unit={ex.type === 'time' ? 'sec' : 'reps'} />
+                    {ex.type === 'weighted' && <BigNumberInput value={s.weight} onChange={v => updateSet(ei, si, 'weight', v)} step={1.25} placeholder="0" unit="kg" isPreFilled={s.isPreFilled} />}
+                    <BigNumberInput value={s.reps} onChange={v => updateSet(ei, si, 'reps', v)} step={1} placeholder="0" unit={ex.type === 'time' ? 'sec' : 'reps'} isPreFilled={s.isPreFilled} />
                     <button onClick={() => startRest(ex.rest)} style={{ backgroundColor: '#84cc16', color: '#000', border: 'none', borderRadius: 10, padding: '0 16px', fontSize: FS.sm, fontWeight: 700, cursor: 'pointer', minHeight: 50, alignSelf: 'stretch' }}>Rec</button>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1080,14 +1089,6 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
                 </div>
               ))}
             </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
-                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Sensazione esercizio</span>
-                <span style={{ color: 'rgba(255,255,255,0.7)' }}>{ex.feeling}/10</span>
-              </div>
-              <input type="range" min="1" max="10" value={ex.feeling} onChange={e => updateEx(ei, 'feeling', parseInt(e.target.value))} style={{ width: '100%', accentColor: '#84cc16', height: 44 }} />
-            </div>
           </div>
         ))}
 
@@ -1097,11 +1098,22 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
         {phase === 'cooldown' && (
           <div style={{ ...cardLarge, backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'rgba(59,130,246,0.3)', marginBottom: 16 }}>
             <div style={{ fontWeight: 600, color: '#60a5fa', fontSize: FS.lg, marginBottom: 12 }}>❄️ Cool-down + Stretching (10 min)</div>
-            <ol style={{ paddingLeft: 20, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <ol style={{ paddingLeft: 20, margin: 0, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
               {task.cooldown.map((step, i) => (
                 <li key={i} style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', lineHeight: 1.4 }}>{step}</li>
               ))}
             </ol>
+
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: FS.sm, marginBottom: 8 }}>
+                <span style={{ color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: 2 }}>Sensazione sessione
+                  <InfoButton glossKey="Sensazione" onClick={onGloss} />
+                </span>
+                <span style={{ color: '#fff', fontWeight: 600 }}>{sessionFeeling}/10</span>
+              </div>
+              <input type="range" min="1" max="10" value={sessionFeeling} onChange={e => setSessionFeeling(parseInt(e.target.value))} style={{ width: '100%', accentColor: '#84cc16', height: 44 }} />
+            </div>
+
             <button onClick={saveSession} style={{ marginTop: 16, backgroundColor: '#84cc16', color: '#000', border: 'none', borderRadius: 10, padding: '12px 20px', fontSize: FS.base, fontWeight: 600, minHeight: 44, cursor: 'pointer', width: '100%' }}>Chiudi sessione ✓</button>
           </div>
         )}
@@ -1120,18 +1132,27 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
 };
 
 // ============ BIG NUMBER INPUT (layout verticale, numero grande visibile) ============
-const BigNumberInput = ({ value, onChange, step = 1, placeholder, unit }) => {
-  const dec = () => onChange(Math.max(0, (parseFloat(value) || 0) - step).toString());
-  const inc = () => onChange(((parseFloat(value) || 0) + step).toString());
+const BigNumberInput = ({ value, onChange, step = 1, placeholder, unit, isPreFilled = false }) => {
+  const displayVal = (v) => {
+    if (!v) return '';
+    // Mostra con virgola italiana (sostituisci . con ,)
+    return String(v).replace('.', ',');
+  };
+  const dec = () => onChange(Math.max(0, (parseDecimal(value) - step)).toString());
+  const inc = () => onChange(((parseDecimal(value)) + step).toString());
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, flex: 1, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: isPreFilled ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, flex: 1, overflow: 'hidden' }}>
       <input
-        type="number"
+        type="text"
         inputMode="decimal"
-        value={value}
-        onChange={e => onChange(e.target.value)}
+        value={displayVal(value)}
+        onChange={e => {
+          const v = e.target.value;
+          const isValidInput = /^[0-9]*[.,]?[0-9]*$/.test(v);
+          if (isValidInput) onChange(v);
+        }}
         placeholder={placeholder}
-        style={{ width: '100%', backgroundColor: 'transparent', textAlign: 'center', fontSize: FS.numBig, fontWeight: 700, color: '#fff', border: 'none', outline: 'none', padding: '10px 4px 2px', minHeight: 50, boxSizing: 'border-box' }}
+        style={{ width: '100%', backgroundColor: 'transparent', textAlign: 'center', fontSize: FS.numBig, fontWeight: 700, color: isPreFilled ? 'rgba(255,255,255,0.55)' : '#fff', border: 'none', outline: 'none', padding: '10px 4px 2px', minHeight: 50, boxSizing: 'border-box', fontStyle: isPreFilled ? 'italic' : 'normal' }}
       />
       {unit && <div style={{ textAlign: 'center', fontSize: FS.tiny, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: -2, marginBottom: 4 }}>{unit}</div>}
       <div style={{ display: 'flex', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
@@ -1139,6 +1160,29 @@ const BigNumberInput = ({ value, onChange, step = 1, placeholder, unit }) => {
         <button onClick={inc} style={{ flex: 1, padding: 10, color: '#fff', background: 'none', border: 'none', minHeight: 44, fontSize: FS.lg, cursor: 'pointer', fontWeight: 600 }}>+</button>
       </div>
     </div>
+  );
+};
+
+// ============ EXERCISE NOTE BUTTON ============
+const ExerciseNoteButton = ({ note }) => {
+  const [open, setOpen] = useState(false);
+  if (!note) return null;
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{ background: 'none', border: 'none', color: '#84cc16', padding: 4, cursor: 'pointer', fontSize: FS.xs, display: 'inline-flex', alignItems: 'center', gap: 4 }}>💡 nota</button>
+      {open && (
+        <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 20, padding: 24, maxWidth: 380, width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+              <h3 style={{ fontSize: FS.lg, fontWeight: 600, color: '#84cc16' }}>Nota esercizio</h3>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: 0 }}><X size={22} /></button>
+            </div>
+            <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', whiteSpace: 'pre-line', lineHeight: 1.6 }}>{note}</div>
+            <button onClick={() => setOpen(false)} style={{ ...btnPrimary, marginTop: 20 }}>Ho capito ✓</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
