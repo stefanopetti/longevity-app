@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <title>Longevity</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#0a0a0a" />
+
+  <!-- iOS specific -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Longevity" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+
+  <style>
+    html, body { margin: 0; padding: 0; background: #0a0a0a; color: #fff; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif; }
+    #root { min-height: 100vh; }
+    /* Disabilita zoom su double tap */
+    * { touch-action: manipulation; }
+    /* Loading state mentre Babel compila */
+    .loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; font-size: 18px; color: rgba(255,255,255,0.6); }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="loading">Caricamento...</div>
+  </div>
+
+  <!-- React via CDN -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+
+  <!-- Babel standalone per compilare JSX nel browser (precompilato cached) -->
+  <script src="https://unpkg.com/@babel/standalone@7.25.0/babel.min.js"></script>
+
+  <!-- App -->
+  <script type="text/babel" data-type="module" src="./app.jsx"></script>
+
+  <!-- Service worker per offline -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js').catch(err => console.log('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
