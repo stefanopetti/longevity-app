@@ -734,7 +734,12 @@ function LongevityAppV4() {
   const prs = getPRs(history);
 
   if (!loaded) return <div style={{ ...APP_STYLE, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: FS['2xl'] }}>Caricamento...</div>;
-  if (currentTask) return <TaskScreen task={TASKS[currentTask]} history={history} saveHistory={saveHistory} onExit={() => setCurrentTask(null)} onGloss={setGlossOpen} />;
+  if (currentTask) return (
+    <>
+      <TaskScreen task={TASKS[currentTask]} history={history} saveHistory={saveHistory} onExit={() => setCurrentTask(null)} onGloss={setGlossOpen} />
+      <GlossaryModal termKey={glossOpen} onClose={() => setGlossOpen(null)} />
+    </>
+  );
   if (showCheckIn) return <CheckInScreen dailyLogs={dailyLogs} saveDaily={saveDaily} onExit={() => setShowCheckIn(false)} />;
   if (showReport) return <ReportScreen profile={profile} history={history} measurements={measurements} dailyLogs={dailyLogs} goals={goals} health={health} streak={streak} prs={prs} onExit={() => setShowReport(false)} />;
 
