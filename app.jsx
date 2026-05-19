@@ -46,11 +46,33 @@ const DEFAULT_PROFILE = {
   lastBackupReminder: '',
   cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '',
   hsCRP: '', insulin: '', homa: '', testTot: '', testFree: '', shbg: '', tsh: '', ft3: '', ferritin: '', egfr: '',
-  bloodDate: '',
+  bloodDate: '', bloodDates: {},
   _migrated_v8: false
 };
 
 const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'vo2max', 'hrRest', 'hrv', 'bpSys', 'bpDia'];
+const BLOOD_FIELDS = [
+  { key: 'hsCRP', label: 'hs-CRP', unit: 'mg/L' },
+  { key: 'insulin', label: 'Insulina a digiuno', unit: 'µU/mL' },
+  { key: 'homa', label: 'HOMA-IR', unit: '' },
+  { key: 'cholTotal', label: 'Colesterolo totale', unit: 'mg/dL' },
+  { key: 'ldl', label: 'LDL', unit: 'mg/dL' },
+  { key: 'hdl', label: 'HDL', unit: 'mg/dL' },
+  { key: 'trigl', label: 'Trigliceridi', unit: 'mg/dL' },
+  { key: 'apoB', label: 'ApoB', unit: 'mg/dL' },
+  { key: 'lpa', label: 'Lp(a)', unit: 'nmol/L' },
+  { key: 'glucose', label: 'Glicemia', unit: 'mg/dL' },
+  { key: 'hba1c', label: 'HbA1c', unit: '%' },
+  { key: 'testTot', label: 'Testosterone totale', unit: 'ng/dL' },
+  { key: 'testFree', label: 'Testosterone libero', unit: 'pg/mL' },
+  { key: 'shbg', label: 'SHBG', unit: 'nmol/L' },
+  { key: 'tsh', label: 'TSH', unit: 'mU/L' },
+  { key: 'ft3', label: 'Free T3', unit: 'pg/mL' },
+  { key: 'homocysteine', label: 'Omocisteina', unit: 'µmol/L' },
+  { key: 'vitDBlood', label: 'Vit. D', unit: 'ng/mL' },
+  { key: 'ferritin', label: 'Ferritina', unit: 'ng/mL' },
+  { key: 'egfr', label: 'eGFR', unit: 'mL/min/1.73m²' }
+];
 
 const emptyMeasurementDraft = () => MEASURE_KEYS.reduce((acc, key) => ({
   ...acc,
@@ -2212,7 +2234,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
                 </span>
                 <span style={{ color: 'rgba(255,255,255,0.4)' }}>{f.unit}</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
                 <input type="number" inputMode="decimal" value={newM[f.key]?.value || ''} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), value: e.target.value } })} style={inputStyle} placeholder={f.unit === 'ml/kg/min' ? 'da Salute → Cardio Fitness' : 'da Salute o Withings'} />
                 <input type="date" value={newM[f.key]?.date || todayKey()} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), date: e.target.value } })} style={compactDateInputStyle} />
               </div>
@@ -2332,6 +2354,13 @@ const ProfileTab = ({ profile, saveProfile, measurements, onReport, onReset, onE
   const latestWeight = getLatestMeasurementSnapshot(measurements).weight;
   const proteinTarget = latestWeight ? Math.round(parseDecimal(latestWeight) * 1.7) : 0;
   const fileRef = useRef();
+  const bloodDateFor = (key) => profile.bloodDates?.[key] || profile.bloodDate || '';
+  const updateBloodDate = (key, value) => saveProfile({ ...profile, bloodDates: { ...(profile.bloodDates || {}), [key]: value } });
+  const latestBloodDate = BLOOD_FIELDS
+    .filter(m => profile[m.key])
+    .map(m => bloodDateFor(m.key))
+    .filter(Boolean)
+    .sort((a, b) => new Date(b) - new Date(a))[0];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
@@ -2364,45 +2393,44 @@ const ProfileTab = ({ profile, saveProfile, measurements, onReport, onReset, onE
 
       <Section title="Esami sangue" open={open.blood} toggle={() => setOpen(s => ({ ...s, blood: !s.blood }))}>
         {/* Alert esami scaduti */}
-        {profile.bloodDate && (() => {
-          const monthsAgo = (Date.now() - new Date(profile.bloodDate).getTime()) / (1000 * 60 * 60 * 24 * 30);
+        {latestBloodDate && (() => {
+          const monthsAgo = (Date.now() - new Date(latestBloodDate).getTime()) / (1000 * 60 * 60 * 24 * 30);
           if (monthsAgo > 6) {
             return (
               <div style={{ ...card, backgroundColor: 'rgba(245,158,11,0.1)', borderColor: 'rgba(245,158,11,0.3)', marginBottom: 4 }}>
                 <div style={{ fontSize: FS.sm, color: '#fbbf24', fontWeight: 600 }}>⚠️ Esami obsoleti</div>
-                <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.7)', marginTop: 4 }}>Ultimo esame {Math.round(monthsAgo)} mesi fa. Consigliato controllo periodico ogni 6 mesi a 53 anni.</div>
+                <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.7)', marginTop: 4 }}>Esame più recente {Math.round(monthsAgo)} mesi fa. Consigliato controllo periodico ogni 6 mesi a 53 anni.</div>
               </div>
             );
           }
           return null;
         })()}
 
-        <Field label="Data ultimo esame" value={profile.bloodDate} unit="" onChange={v => update('bloodDate', v)} type="date" />
         <BloodGroupHeader>🔥 Infiammazione e metabolismo</BloodGroupHeader>
-        <BloodField fieldKey="hsCRP" label="hs-CRP" value={profile.hsCRP} unit="mg/L" onChange={v => update('hsCRP', v)} />
-        <BloodField fieldKey="insulin" label="Insulina a digiuno" value={profile.insulin} unit="µU/mL" onChange={v => update('insulin', v)} />
-        <BloodField fieldKey="homa" label="HOMA-IR" value={profile.homa} unit="" onChange={v => update('homa', v)} />
+        <BloodField fieldKey="hsCRP" label="hs-CRP" value={profile.hsCRP} unit="mg/L" onChange={v => update('hsCRP', v)} date={bloodDateFor('hsCRP')} onDateChange={v => updateBloodDate('hsCRP', v)} />
+        <BloodField fieldKey="insulin" label="Insulina a digiuno" value={profile.insulin} unit="µU/mL" onChange={v => update('insulin', v)} date={bloodDateFor('insulin')} onDateChange={v => updateBloodDate('insulin', v)} />
+        <BloodField fieldKey="homa" label="HOMA-IR" value={profile.homa} unit="" onChange={v => update('homa', v)} date={bloodDateFor('homa')} onDateChange={v => updateBloodDate('homa', v)} />
         <BloodGroupHeader>❤️ Lipidi e cardiovascolare</BloodGroupHeader>
-        <BloodField fieldKey="cholTotal" label="Colesterolo totale" value={profile.cholTotal} unit="mg/dL" onChange={v => update('cholTotal', v)} />
-        <BloodField fieldKey="ldl" label="LDL" value={profile.ldl} unit="mg/dL" onChange={v => update('ldl', v)} />
-        <BloodField fieldKey="hdl" label="HDL" value={profile.hdl} unit="mg/dL" onChange={v => update('hdl', v)} />
-        <BloodField fieldKey="trigl" label="Trigliceridi" value={profile.trigl} unit="mg/dL" onChange={v => update('trigl', v)} />
-        <BloodField fieldKey="apoB" label="ApoB" value={profile.apoB} unit="mg/dL" onChange={v => update('apoB', v)} />
-        <BloodField fieldKey="lpa" label="Lp(a)" value={profile.lpa} unit="nmol/L" onChange={v => update('lpa', v)} />
+        <BloodField fieldKey="cholTotal" label="Colesterolo totale" value={profile.cholTotal} unit="mg/dL" onChange={v => update('cholTotal', v)} date={bloodDateFor('cholTotal')} onDateChange={v => updateBloodDate('cholTotal', v)} />
+        <BloodField fieldKey="ldl" label="LDL" value={profile.ldl} unit="mg/dL" onChange={v => update('ldl', v)} date={bloodDateFor('ldl')} onDateChange={v => updateBloodDate('ldl', v)} />
+        <BloodField fieldKey="hdl" label="HDL" value={profile.hdl} unit="mg/dL" onChange={v => update('hdl', v)} date={bloodDateFor('hdl')} onDateChange={v => updateBloodDate('hdl', v)} />
+        <BloodField fieldKey="trigl" label="Trigliceridi" value={profile.trigl} unit="mg/dL" onChange={v => update('trigl', v)} date={bloodDateFor('trigl')} onDateChange={v => updateBloodDate('trigl', v)} />
+        <BloodField fieldKey="apoB" label="ApoB" value={profile.apoB} unit="mg/dL" onChange={v => update('apoB', v)} date={bloodDateFor('apoB')} onDateChange={v => updateBloodDate('apoB', v)} />
+        <BloodField fieldKey="lpa" label="Lp(a)" value={profile.lpa} unit="nmol/L" onChange={v => update('lpa', v)} date={bloodDateFor('lpa')} onDateChange={v => updateBloodDate('lpa', v)} />
         <BloodGroupHeader>🍬 Glicemia</BloodGroupHeader>
-        <BloodField fieldKey="glucose" label="Glicemia" value={profile.glucose} unit="mg/dL" onChange={v => update('glucose', v)} />
-        <BloodField fieldKey="hba1c" label="HbA1c" value={profile.hba1c} unit="%" onChange={v => update('hba1c', v)} />
+        <BloodField fieldKey="glucose" label="Glicemia" value={profile.glucose} unit="mg/dL" onChange={v => update('glucose', v)} date={bloodDateFor('glucose')} onDateChange={v => updateBloodDate('glucose', v)} />
+        <BloodField fieldKey="hba1c" label="HbA1c" value={profile.hba1c} unit="%" onChange={v => update('hba1c', v)} date={bloodDateFor('hba1c')} onDateChange={v => updateBloodDate('hba1c', v)} />
         <BloodGroupHeader>⚡ Ormonale</BloodGroupHeader>
-        <BloodField fieldKey="testTot" label="Testosterone totale" value={profile.testTot} unit="ng/dL" onChange={v => update('testTot', v)} />
-        <BloodField fieldKey="testFree" label="Testosterone libero" value={profile.testFree} unit="pg/mL" onChange={v => update('testFree', v)} />
-        <BloodField fieldKey="shbg" label="SHBG" value={profile.shbg} unit="nmol/L" onChange={v => update('shbg', v)} />
-        <BloodField fieldKey="tsh" label="TSH" value={profile.tsh} unit="mU/L" onChange={v => update('tsh', v)} />
-        <BloodField fieldKey="ft3" label="Free T3" value={profile.ft3} unit="pg/mL" onChange={v => update('ft3', v)} />
+        <BloodField fieldKey="testTot" label="Testosterone totale" value={profile.testTot} unit="ng/dL" onChange={v => update('testTot', v)} date={bloodDateFor('testTot')} onDateChange={v => updateBloodDate('testTot', v)} />
+        <BloodField fieldKey="testFree" label="Testosterone libero" value={profile.testFree} unit="pg/mL" onChange={v => update('testFree', v)} date={bloodDateFor('testFree')} onDateChange={v => updateBloodDate('testFree', v)} />
+        <BloodField fieldKey="shbg" label="SHBG" value={profile.shbg} unit="nmol/L" onChange={v => update('shbg', v)} date={bloodDateFor('shbg')} onDateChange={v => updateBloodDate('shbg', v)} />
+        <BloodField fieldKey="tsh" label="TSH" value={profile.tsh} unit="mU/L" onChange={v => update('tsh', v)} date={bloodDateFor('tsh')} onDateChange={v => updateBloodDate('tsh', v)} />
+        <BloodField fieldKey="ft3" label="Free T3" value={profile.ft3} unit="pg/mL" onChange={v => update('ft3', v)} date={bloodDateFor('ft3')} onDateChange={v => updateBloodDate('ft3', v)} />
         <BloodGroupHeader>🩸 Altri marker</BloodGroupHeader>
-        <BloodField fieldKey="homocysteine" label="Omocisteina" value={profile.homocysteine} unit="µmol/L" onChange={v => update('homocysteine', v)} />
-        <BloodField fieldKey="vitDBlood" label="Vit. D" value={profile.vitDBlood} unit="ng/mL" onChange={v => update('vitDBlood', v)} />
-        <BloodField fieldKey="ferritin" label="Ferritina" value={profile.ferritin} unit="ng/mL" onChange={v => update('ferritin', v)} />
-        <BloodField fieldKey="egfr" label="eGFR" value={profile.egfr} unit="mL/min/1.73m²" onChange={v => update('egfr', v)} />
+        <BloodField fieldKey="homocysteine" label="Omocisteina" value={profile.homocysteine} unit="µmol/L" onChange={v => update('homocysteine', v)} date={bloodDateFor('homocysteine')} onDateChange={v => updateBloodDate('homocysteine', v)} />
+        <BloodField fieldKey="vitDBlood" label="Vit. D" value={profile.vitDBlood} unit="ng/mL" onChange={v => update('vitDBlood', v)} date={bloodDateFor('vitDBlood')} onDateChange={v => updateBloodDate('vitDBlood', v)} />
+        <BloodField fieldKey="ferritin" label="Ferritina" value={profile.ferritin} unit="ng/mL" onChange={v => update('ferritin', v)} date={bloodDateFor('ferritin')} onDateChange={v => updateBloodDate('ferritin', v)} />
+        <BloodField fieldKey="egfr" label="eGFR" value={profile.egfr} unit="mL/min/1.73m²" onChange={v => update('egfr', v)} date={bloodDateFor('egfr')} onDateChange={v => updateBloodDate('egfr', v)} />
       </Section>
 
       <button onClick={onReport} style={btnPrimary}>
@@ -2455,7 +2483,7 @@ const BloodGroupHeader = ({ children }) => (
   </div>
 );
 
-const BloodField = ({ fieldKey, label: lbl, value, unit, onChange }) => {
+const BloodField = ({ fieldKey, label: lbl, value, unit, onChange, date, onDateChange }) => {
   const evaluation = value ? evalMarker(fieldKey, value) : null;
   return (
     <div>
@@ -2463,11 +2491,14 @@ const BloodField = ({ fieldKey, label: lbl, value, unit, onChange }) => {
         <span style={{ color: 'rgba(255,255,255,0.6)' }}>{lbl}</span>
         <span style={{ color: 'rgba(255,255,255,0.4)' }}>{unit}</span>
       </div>
-      <div style={{ position: 'relative' }}>
-        <input type="number" inputMode="decimal" value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, paddingRight: evaluation ? 36 : 12, borderColor: evaluation ? evaluation.color + '50' : 'rgba(255,255,255,0.1)' }} />
-        {evaluation && (
-          <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, borderRadius: '50%', backgroundColor: evaluation.color }} />
-        )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
+        <div style={{ position: 'relative', minWidth: 0 }}>
+          <input type="number" inputMode="decimal" value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, paddingRight: evaluation ? 36 : 12, borderColor: evaluation ? evaluation.color + '50' : 'rgba(255,255,255,0.1)' }} />
+          {evaluation && (
+            <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, borderRadius: '50%', backgroundColor: evaluation.color }} />
+          )}
+        </div>
+        <input type="date" value={date || ''} onChange={e => onDateChange(e.target.value)} style={compactDateInputStyle} />
       </div>
       {evaluation && (
         <div style={{ fontSize: FS.tiny, color: evaluation.color, marginTop: 4, fontWeight: 500 }}>
@@ -2588,28 +2619,13 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
     });
   }
 
-  if (profile.hsCRP || profile.insulin || profile.homa || profile.cholTotal || profile.ldl || profile.hdl || profile.trigl || profile.apoB || profile.lpa || profile.glucose || profile.hba1c || profile.testTot || profile.testFree || profile.shbg || profile.tsh || profile.ft3 || profile.homocysteine || profile.vitDBlood || profile.ferritin || profile.egfr) {
-    r += `\n## Esami sangue (${profile.bloodDate || 'data n/d'})\n`;
-    if (profile.hsCRP) r += `- hs-CRP: ${profile.hsCRP} mg/L\n`;
-    if (profile.insulin) r += `- Insulina a digiuno: ${profile.insulin} µU/mL\n`;
-    if (profile.homa) r += `- HOMA-IR: ${profile.homa}\n`;
-    if (profile.cholTotal) r += `- Colesterolo tot: ${profile.cholTotal} mg/dL\n`;
-    if (profile.ldl) r += `- LDL: ${profile.ldl} mg/dL\n`;
-    if (profile.hdl) r += `- HDL: ${profile.hdl} mg/dL\n`;
-    if (profile.trigl) r += `- Trigliceridi: ${profile.trigl} mg/dL\n`;
-    if (profile.apoB) r += `- ApoB: ${profile.apoB} mg/dL\n`;
-    if (profile.lpa) r += `- Lp(a): ${profile.lpa} nmol/L\n`;
-    if (profile.glucose) r += `- Glicemia: ${profile.glucose} mg/dL\n`;
-    if (profile.hba1c) r += `- HbA1c: ${profile.hba1c}%\n`;
-    if (profile.testTot) r += `- Testosterone totale: ${profile.testTot} ng/dL\n`;
-    if (profile.testFree) r += `- Testosterone libero: ${profile.testFree} pg/mL\n`;
-    if (profile.shbg) r += `- SHBG: ${profile.shbg} nmol/L\n`;
-    if (profile.tsh) r += `- TSH: ${profile.tsh} mU/L\n`;
-    if (profile.ft3) r += `- Free T3: ${profile.ft3} pg/mL\n`;
-    if (profile.homocysteine) r += `- Omocisteina: ${profile.homocysteine} µmol/L\n`;
-    if (profile.vitDBlood) r += `- Vit. D: ${profile.vitDBlood} ng/mL\n`;
-    if (profile.ferritin) r += `- Ferritina: ${profile.ferritin} ng/mL\n`;
-    if (profile.egfr) r += `- eGFR: ${profile.egfr} mL/min/1.73m²\n`;
+  if (BLOOD_FIELDS.some(m => profile[m.key])) {
+    r += `\n## Esami sangue\n`;
+    BLOOD_FIELDS.forEach(m => {
+      if (!profile[m.key]) return;
+      const markerDate = profile.bloodDates?.[m.key] || profile.bloodDate || 'data n/d';
+      r += `- ${m.label}: ${profile[m.key]}${m.unit ? ` ${m.unit}` : ''} (${markerDate})\n`;
+    });
   }
 
   r += `\n## Attività extra del mese (compilare a mano)\n_Aggiungi qui hiking, sci, padel, camminate lunghe, ecc._\n`;
