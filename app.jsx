@@ -43,6 +43,7 @@ const DEFAULT_PROFILE = {
   hrMax: '',
   supplements: [],
   customGoalTargets: {},
+  lastBackupReminder: '',
   cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '', bloodDate: '',
   _migrated_v8: false
 };
@@ -85,6 +86,14 @@ const GLOSSARY = {
     title: 'Double Progression',
     body: 'Strategia evidence-based:\n\n1. Fai il bottom del range reps (es. 8 su 8-12)\n2. Sessione dopo sessione, aggiungi reps con stesso carico\n3. Quando raggiungi il top del range con RIR ≥2 (12 reps con RIR 2), aumenta carico di 2.5kg\n4. Riparti dal bottom del range con il nuovo carico\n\nSemplice e funziona.'
   },
+  OggiSuggerito: {
+    title: 'Come funziona "Oggi suggerito"',
+    body: 'L\'app suggerisce la sessione del giorno basandosi su:\n\n1. Giorno della settimana\n   • Lun → Forza Upper\n   • Mar → Zone 2\n   • Mer → Movement Quality (PT)\n   • Gio → Norwegian 4x4\n   • Ven → Forza Lower\n\n2. Cosa hai già fatto questa settimana\nSe oggi è suggerito "Upper" ma l\'hai già fatto, suggerisce un\'altra task ancora da completare.\n\n3. Recovery (se hai fatto check-in oggi)\nSe energia bassa o soreness alta, suggerisce alternativa più leggera.\n\nPuoi sempre scegliere altro da Sessioni: la schedule è flessibile.'
+  },
+  Algoritmo: {
+    title: 'Come funziona l\'algoritmo',
+    body: '1) SUGGERIMENTO GIORNALIERO\nGuarda giorno della settimana, cosa hai già fatto, e recovery dal check-in.\n\n2) SUGGERIMENTO CARICHI (Double Progression)\nPer ogni esercizio, dopo l\'ultima sessione:\n• Top range + RIR≥2 su tutte le serie → +2,5kg, ricomincia bottom range\n• Sotto range o RIR≤0 → -2,5kg\n• Altrimenti → stesso peso, +1 rep\n\n3) ALERT AUTOMATICI\n• Stallo (3 sessioni stesso peso/reps) → cambia variante o deload\n• Recovery basso (5 giorni) → riduci volume\n• Aderenza bassa (2 sett <3 sessioni) → riduci target\n• Deload week (ogni 25 sessioni)\n\n4) CORREZIONI MENSILI\nL\'app NON sostituisce esercizi automaticamente.\nOgni mese: Genera Report → condividi con Claude → review umana → modifiche scheda.'
+  },
   HealthScore: {
     title: 'Indice Salute Generale',
     body: 'Score 0-100 composto da 4 driver evidence-based per longevità:\n\n• ADERENZA (35%)\n% sessioni completate ultime 4 settimane vs target 20.\n\n• SONNO (25%)\nMedia ore ultimi 7 giorni vs target 7.5h.\n5.5h → 0 · 7.5h → 100.\n\n• HRV (20%)\nTrend HRV vs baseline (prima misurazione). +10% → 100 · -10% → 0.\n\n• RECOVERY (20%)\nCalcolato da check-in mattutini (energia + soreness) ultimi 7 giorni.\n\nSe un componente manca, il peso si redistribuisce sugli altri.\n\nSoglie: 🟢 80-100 · 🟡 60-79 · 🔴 <60'
@@ -117,7 +126,8 @@ const TASKS = {
       { name: 'Rematore manubrio (per lato)', sets: 3, repsRange: [10, 12], rir: 2, rest: 90, type: 'weighted' },
       { name: 'Push-up', sets: 3, repsRange: [8, 20], rir: 2, rest: 90, type: 'bodyweight', note: 'Fermati a 2 dal cedimento' },
       { name: 'Face pull con elastico', sets: 3, repsRange: [12, 18], rir: 3, rest: 60, type: 'weighted', note: 'Salute spalle, no cedimento' },
-      { name: 'Hollow body hold (finisher core)', sets: 3, repsRange: [20, 45], rir: 2, rest: 60, type: 'time', note: 'Lombare schiacciata a terra' }
+      { name: 'Hollow body hold (finisher core)', sets: 3, repsRange: [20, 45], rir: 2, rest: 60, type: 'time', note: 'Lombare schiacciata a terra' },
+      { name: 'Dead hang (grip + spalle)', sets: 3, repsRange: [20, 60], rir: 2, rest: 60, type: 'time', note: 'Appeso alla sbarra. Forza presa = predittore di longevità. Progressione: aumenta secondi nel tempo.' }
     ]
   },
   zone2: {
@@ -179,6 +189,7 @@ const TASKS = {
       'Respirazione diaframmatica 2 min'
     ],
     exercises: [
+      { name: 'Jump squat (power work)', sets: 3, repsRange: [3, 5], rir: 3, rest: 90, type: 'bodyweight', note: 'Power work iniziale a fibre fresche. Salto controllato, atterraggio morbido. 3-5 reps esplosivi, NO cedimento. Cruciale a 53 anni per fibre fast-twitch.' },
       { name: 'Goblet squat', sets: 4, repsRange: [8, 12], rir: 2, rest: 120, type: 'weighted', note: 'Profondità prima del carico' },
       { name: 'Stacco rumeno con manubri', sets: 4, repsRange: [8, 12], rir: 2, rest: 120, type: 'weighted', note: 'Schiena neutra, carico al femorale' },
       { name: 'Hip thrust', sets: 3, repsRange: [10, 15], rir: 2, rest: 90, type: 'weighted' },
@@ -715,6 +726,13 @@ function LongevityAppV4() {
       const m = await storage.get('measurements', []);
       const d = await storage.get('dailyLogs', {});
       const da = await storage.get('dismissedAlerts', []);
+      const lastSnapshotDate = await storage.get('autoSnapshotDate', '');
+      const todayStr = todayKey();
+      if (lastSnapshotDate !== todayStr) {
+        const dailySnapshot = { profile: p, history: h, measurements: m, dailyLogs: d, snapshotAt: new Date().toISOString() };
+        await storage.set('snapshot_yesterday', dailySnapshot);
+        await storage.set('autoSnapshotDate', todayStr);
+      }
       setProfile(p); setHistory(h); setMeasurements(m); setDailyLogs(d); setDismissedAlerts(da); setLoaded(true);
     })();
   }, []);
@@ -731,8 +749,23 @@ function LongevityAppV4() {
   useEffect(() => {
     if (!loaded) return;
     const alerts = checkAdjustments(history, dailyLogs, dismissedAlerts);
-    if (alerts.length > 0 && !activeAlert) setActiveAlert(alerts[0]);
-  }, [history, dailyLogs, dismissedAlerts, loaded]);
+    if (alerts.length > 0 && !activeAlert) { setActiveAlert(alerts[0]); return; }
+    const today = new Date();
+    if (today.getDate() === 1) {
+      const monthKey = `${today.getFullYear()}-${today.getMonth() + 1}`;
+      const lastReminder = profile?.lastBackupReminder || '';
+      if (lastReminder !== monthKey && !activeAlert) {
+        setActiveAlert({
+          id: `backup-${monthKey}`,
+          severity: 'info',
+          icon: '📦',
+          title: 'Backup mensile suggerito',
+          body: 'È il primo del mese: salva un backup dei tuoi dati.\n\nApri Profilo → "Export JSON" e salva il file in iCloud Drive o email.\n\nProtegge i tuoi dati da reset Safari o cambio iPhone.',
+          isBackupReminder: true
+        });
+      }
+    }
+  }, [history, dailyLogs, dismissedAlerts, loaded, profile]);
 
   const saveProfile = async (p) => { setProfile(p); await storage.set('profile', p); };
   const saveHistory = async (h) => { setHistory(h); await storage.set('history', h); };
@@ -740,9 +773,16 @@ function LongevityAppV4() {
   const saveDaily = async (d) => { setDailyLogs(d); await storage.set('dailyLogs', d); };
 
   const dismissAlert = async (id) => {
-    const next = [...dismissedAlerts, id];
-    setDismissedAlerts(next);
-    await storage.set('dismissedAlerts', next);
+    if (id.startsWith('backup-')) {
+      const monthKey = id.replace('backup-', '');
+      const newProfile = { ...profile, lastBackupReminder: monthKey };
+      setProfile(newProfile);
+      await storage.set('profile', newProfile);
+    } else {
+      const next = [...dismissedAlerts, id];
+      setDismissedAlerts(next);
+      await storage.set('dismissedAlerts', next);
+    }
     setActiveAlert(null);
   };
 
@@ -933,7 +973,7 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
       </div>
 
       <div>
-        <div style={{ ...label, marginBottom: 8 }}>Oggi suggerito</div>
+        <div style={{ ...label, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 2 }}>Oggi suggerito<InfoButton glossKey="OggiSuggerito" onClick={onGloss} /></div>
         {suggestedTaskToday ? (
           <button onClick={() => onStartTask(suggestedTaskToday.id)} style={{ width: '100%', backgroundColor: '#fff', color: '#000', borderRadius: 20, padding: 20, textAlign: 'left', border: 'none', minHeight: 44, cursor: 'pointer' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -954,6 +994,9 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
 
       <button onClick={onReport} style={btnPrimary}>
         <FileText size={20} /> Genera report per Claude
+      </button>
+      <button onClick={() => onGloss('Algoritmo')} style={{ ...btnSecondary, fontSize: FS.sm, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <Info size={16} /> Come funziona l'algoritmo
       </button>
     </div>
   );
@@ -1098,9 +1141,12 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
               {/* SUGGERIMENTO TARGET (Double progression) */}
               {ex.suggestion && (
                 <div style={{ marginTop: 10, padding: 10, backgroundColor: 'rgba(132,204,22,0.08)', borderRadius: 8, border: '1px solid rgba(132,204,22,0.2)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: FS.xs, color: '#84cc16', fontWeight: 600 }}>
-                    🎯 OGGI SUGGERITO
-                    <InfoButton glossKey="DoubleProgression" onClick={onGloss} />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: FS.xs, color: '#84cc16', fontWeight: 600 }}>
+                      🎯 OGGI SUGGERITO
+                      <InfoButton glossKey="DoubleProgression" onClick={onGloss} />
+                    </div>
+                    <button onClick={() => { GLOSSARY._whySuggestion = { title: 'Perché questo target?', body: `Esercizio: ${ex.name}\n\n${ex.suggestion.msg}\n\nLogica Double Progression:\n• Top range + RIR≥2 su tutte le serie → +2,5kg, ricomincia bottom range\n• Sotto range o RIR≤0 → -2,5kg\n• Altrimenti → stesso peso, +1 rep\n\nPer dettagli completi tap sull'ⓘ accanto a OGGI SUGGERITO.` }; onGloss('_whySuggestion'); }} style={{ background: 'rgba(132,204,22,0.2)', border: 'none', color: '#84cc16', padding: '3px 8px', borderRadius: 6, fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Perché?</button>
                   </div>
                   <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.9)', marginTop: 4 }}>
                     {ex.suggestion.weight !== null ? `${ex.suggestion.weight}${exTypeLabel(ex.type)} × ${ex.suggestion.reps} reps` : `${ex.suggestion.reps} ${ex.type === 'time' ? 'sec' : 'reps'}`}
