@@ -2227,12 +2227,15 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
           <div style={{ fontSize: FS.base, fontWeight: 600 }}>Nuova misurazione</div>
           {fields.map(f => (
             <div key={f.key}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
+              <div style={{ fontSize: FS.xs, marginBottom: 4 }}>
                 <span style={{ color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: 2 }}>
                   {f.label}
                   {f.glossKey && <InfoButton glossKey={f.glossKey} onClick={onGloss} />}
                 </span>
-                <span style={{ color: 'rgba(255,255,255,0.4)' }}>{f.unit}</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, fontSize: FS.tiny, marginBottom: 4 }}>
+                <span style={{ color: 'rgba(255,255,255,0.4)' }}>Valore{f.unit ? ` (${f.unit})` : ''}</span>
+                <span style={{ color: 'rgba(255,255,255,0.4)' }}>Data</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
                 <input type="number" inputMode="decimal" value={newM[f.key]?.value || ''} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), value: e.target.value } })} style={inputStyle} placeholder={f.unit === 'ml/kg/min' ? 'da Salute → Cardio Fitness' : 'da Salute o Withings'} />
@@ -2487,9 +2490,12 @@ const BloodField = ({ fieldKey, label: lbl, value, unit, onChange, date, onDateC
   const evaluation = value ? evalMarker(fieldKey, value) : null;
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
+      <div style={{ fontSize: FS.xs, marginBottom: 4 }}>
         <span style={{ color: 'rgba(255,255,255,0.6)' }}>{lbl}</span>
-        <span style={{ color: 'rgba(255,255,255,0.4)' }}>{unit}</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, fontSize: FS.tiny, marginBottom: 4 }}>
+        <span style={{ color: 'rgba(255,255,255,0.4)' }}>Valore{unit ? ` (${unit})` : ''}</span>
+        <span style={{ color: 'rgba(255,255,255,0.4)' }}>Data</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
         <div style={{ position: 'relative', minWidth: 0 }}>
