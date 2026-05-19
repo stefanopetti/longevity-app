@@ -647,7 +647,12 @@ const calcGoals = (profile, measurements) => {
 };
 
 // ============ STYLES ============
-const APP_STYLE = { fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif', color: '#fff', backgroundColor: '#0a0a0a' };
+const FONT_MONO = '"JetBrains Mono", "SF Mono", Consolas, monospace';
+const COLORS = {
+  primary: '#84cc16', forza: '#84cc16', cardio: '#3b82f6', movement: '#a855f7',
+  recovery: '#f59e0b', alert: '#ef4444', success: '#10b981',
+};
+const APP_STYLE = { fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif', color: '#fff', backgroundColor: '#0a0a0a' };
 const card = { backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 16 };
 const cardLarge = { ...card, borderRadius: 20, padding: 20 };
 const label = { fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'rgba(255,255,255,0.4)' };
@@ -655,6 +660,27 @@ const labelTiny = { fontSize: FS.tiny, textTransform: 'uppercase', letterSpacing
 const btnPrimary = { backgroundColor: '#84cc16', color: '#000', borderRadius: 12, padding: 14, fontWeight: 600, fontSize: FS.base, border: 'none', minHeight: 44, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' };
 const btnSecondary = { backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', borderRadius: 12, padding: 14, fontSize: FS.sm, border: 'none', minHeight: 44, cursor: 'pointer' };
 const inputStyle = { width: '100%', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: 12, fontSize: FS.sm, color: '#fff', minHeight: 44, boxSizing: 'border-box' };
+
+// ============ HAPTIC + PRESS ============
+const haptic = (type = 'light') => {
+  try { if (window.navigator.vibrate) window.navigator.vibrate(type === 'light' ? 10 : 30); } catch (e) {}
+};
+
+const TouchablePress = ({ children, onClick, style, ...rest }) => {
+  const [pressed, setPressed] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onTouchStart={() => setPressed(true)}
+      onTouchEnd={() => setPressed(false)}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      onMouseLeave={() => setPressed(false)}
+      style={{ ...style, transform: pressed ? 'scale(0.96)' : 'scale(1)', transition: 'transform 100ms ease-out', cursor: 'pointer' }}
+      {...rest}
+    >{children}</button>
+  );
+};
 
 // ============ TOOLTIP (popup tap-to-open) ============
 const InfoButton = ({ glossKey, onClick }) => (
@@ -828,7 +854,7 @@ function LongevityAppV4() {
 
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 96 }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '24px 16px 0' }}>
+      <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: '24px 16px 0' }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
         {tab === 'tasks' && <TasksTab history={history} onStart={(id) => setCurrentTask(id)} />}
         {tab === 'goals' && <GoalsTab goals={goals} prs={prs} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} />}
@@ -868,6 +894,73 @@ const BottomNav = ({ tab, setTab }) => {
           </button>
         ))}
       </div>
+    </div>
+  );
+};
+
+// ============ HEALTH RING ============
+const HealthRing = ({ score, components, onGloss }) => {
+  const cx = 100, cy = 100, outerR = 80, innerR = 58, outerStroke = 14, innerStroke = 8;
+  const outerCirc = 2 * Math.PI * outerR;
+  const scoreColor = score === null ? 'rgba(255,255,255,0.12)' : score >= 80 ? '#84cc16' : score >= 60 ? '#fbbf24' : '#ef4444';
+  const driverColors = { aderenza: '#84cc16', sonno: '#3b82f6', HRV: '#a855f7', recovery: '#f59e0b' };
+  const driverIcons = { aderenza: '💪', sonno: '😴', HRV: '💗', recovery: '⚡' };
+  const driverLabels = { aderenza: 'Aderenza', sonno: 'Sonno', HRV: 'HRV', recovery: 'Recovery' };
+  const segGap = 10, segDeg = (360 - 4 * segGap) / 4;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const arcPath = (r, startDeg, endDeg) => {
+    const s = toRad(startDeg - 90), e = toRad(endDeg - 90);
+    const x1 = cx + r * Math.cos(s), y1 = cy + r * Math.sin(s);
+    const x2 = cx + r * Math.cos(e), y2 = cy + r * Math.sin(e);
+    return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+        <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 2 }}>
+          Indice salute <InfoButton glossKey="HealthScore" onClick={onGloss} />
+        </div>
+      </div>
+      <div style={{ position: 'relative', width: 200, height: 200 }}>
+        <svg width="200" height="200" viewBox="0 0 200 200" style={{ display: 'block' }}>
+          <circle cx={cx} cy={cy} r={outerR} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={outerStroke} />
+          <circle cx={cx} cy={cy} r={outerR} fill="none" stroke={scoreColor} strokeWidth={outerStroke}
+            strokeDasharray={outerCirc} strokeDashoffset={score !== null ? outerCirc * (1 - score / 100) : outerCirc}
+            strokeLinecap="round" transform="rotate(-90 100 100)"
+            style={{ transition: 'stroke-dashoffset 800ms ease-out, stroke 400ms ease' }} />
+          {components.map((c, i) => {
+            const start = i * (segDeg + segGap), end = start + segDeg;
+            const color = driverColors[c.key] || '#84cc16';
+            return (
+              <g key={c.key}>
+                <path d={arcPath(innerR, start, end)} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={innerStroke} strokeLinecap="round" />
+                <path d={arcPath(innerR, start, end)} fill="none" stroke={color} strokeWidth={innerStroke} strokeLinecap="round"
+                  pathLength="100" strokeDasharray="100" strokeDashoffset={100 - c.value}
+                  style={{ transition: 'stroke-dashoffset 800ms ease-out', opacity: 0.9 }} />
+              </g>
+            );
+          })}
+          {components.length === 0 && <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={innerStroke} />}
+        </svg>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 52, fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 1, color: scoreColor }}>{score ?? '—'}</div>
+          <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', marginTop: 2 }}>/100</div>
+          {score !== null && <div style={{ fontSize: 14, marginTop: 3 }}>{score >= 80 ? '🟢' : score >= 60 ? '🟡' : '🔴'}</div>}
+        </div>
+      </div>
+      {components.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, width: '100%' }}>
+          {components.map(c => (
+            <div key={c.key} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 15 }}>{driverIcons[c.key] || '●'}</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: FS.sm, fontWeight: 700, color: driverColors[c.key] || '#84cc16', marginTop: 2 }}>{Math.round(c.value)}</div>
+              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: 1, lineHeight: 1.2 }}>{driverLabels[c.key] || c.key}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>Aggiungi dati per vedere l'indice</div>
+      )}
     </div>
   );
 };
@@ -915,34 +1008,8 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
         </button>
       )}
 
-      <div style={{ ...cardLarge, background: 'linear-gradient(135deg, rgba(132,204,22,0.1), transparent)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 2 }}>
-            Indice salute
-            <InfoButton glossKey="HealthScore" onClick={onGloss} />
-          </div>
-          <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>/ 100</div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', marginTop: 8 }}>
-          <div style={{ fontSize: FS['6xl'], fontWeight: 300, letterSpacing: '-0.05em', lineHeight: 1 }}>{health.score ?? '—'}</div>
-          {health.score !== null && (
-            <div style={{ marginLeft: 12, paddingBottom: 8, fontSize: FS['2xl'] }}>{health.score >= 80 ? '🟢' : health.score >= 60 ? '🟡' : '🔴'}</div>
-          )}
-        </div>
-        {health.components.length > 0 && (
-          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: `repeat(${health.components.length}, 1fr)`, gap: 8 }}>
-            {health.components.map(c => (
-              <div key={c.key}>
-                <div style={{ ...labelTiny, display: 'flex', alignItems: 'center', gap: 2 }}>
-                  {c.key}
-                  {c.key === 'HRV' && <InfoButton glossKey="HRV" onClick={onGloss} />}
-                </div>
-                <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: FS.base, fontWeight: 600 }}>{Math.round(c.value)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {health.score === null && <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginTop: 12 }}>Completa qualche sessione e check-in per vedere il tuo indice</div>}
+      <div style={{ ...cardLarge, background: 'linear-gradient(135deg, rgba(132,204,22,0.08), transparent)' }}>
+        <HealthRing score={health.score} components={health.components} onGloss={onGloss} />
       </div>
 
       {streak > 0 && (
@@ -975,7 +1042,7 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
       <div>
         <div style={{ ...label, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 2 }}>Oggi suggerito<InfoButton glossKey="OggiSuggerito" onClick={onGloss} /></div>
         {suggestedTaskToday ? (
-          <button onClick={() => onStartTask(suggestedTaskToday.id)} style={{ width: '100%', backgroundColor: '#fff', color: '#000', borderRadius: 20, padding: 20, textAlign: 'left', border: 'none', minHeight: 44, cursor: 'pointer' }}>
+          <TouchablePress onClick={() => { haptic('light'); onStartTask(suggestedTaskToday.id); }} style={{ width: '100%', background: 'linear-gradient(135deg, #ffffff, #f8f8f8)', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', color: '#000', borderRadius: 20, padding: 20, textAlign: 'left', border: 'none', minHeight: 44 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
                 <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'rgba(0,0,0,0.5)' }}>Suggerita per oggi</div>
@@ -983,7 +1050,7 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
               </div>
               <Play size={32} fill="currentColor" />
             </div>
-          </button>
+          </TouchablePress>
         ) : (
           <div style={cardLarge}>
             <div style={{ fontSize: FS.xl, fontWeight: 300 }}>Riposo o sessione a scelta</div>
@@ -992,9 +1059,9 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
         )}
       </div>
 
-      <button onClick={onReport} style={btnPrimary}>
+      <TouchablePress onClick={() => { haptic('light'); onReport(); }} style={btnPrimary}>
         <FileText size={20} /> Genera report per Claude
-      </button>
+      </TouchablePress>
       <button onClick={() => onGloss('Algoritmo')} style={{ ...btnSecondary, fontSize: FS.sm, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
         <Info size={16} /> Come funziona l'algoritmo
       </button>
@@ -1013,7 +1080,7 @@ const TasksTab = ({ history, onStart }) => {
     const done = doneThisWeek.includes(t.id);
     const lastDone = (history.workouts || []).filter(w => w.taskId === t.id).slice(-1)[0];
     return (
-      <button key={t.id} onClick={() => onStart(t.id)} style={{ ...cardLarge, width: '100%', textAlign: 'left', minHeight: 44, cursor: 'pointer', color: '#fff', borderColor: done ? t.color : 'rgba(255,255,255,0.1)' }}>
+      <TouchablePress key={t.id} onClick={() => { haptic('light'); onStart(t.id); }} style={{ ...cardLarge, width: '100%', textAlign: 'left', minHeight: 44, color: '#fff', borderColor: done ? t.color : 'rgba(255,255,255,0.1)', background: `linear-gradient(135deg, ${t.color}12, transparent)` }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1028,7 +1095,7 @@ const TasksTab = ({ history, onStart }) => {
           </div>
           <Play size={24} color={t.color} fill={t.color} />
         </div>
-      </button>
+      </TouchablePress>
     );
   };
 
@@ -1208,7 +1275,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
               <input type="range" min="1" max="10" value={sessionFeeling} onChange={e => setSessionFeeling(parseInt(e.target.value))} style={{ width: '100%', accentColor: '#84cc16', height: 44 }} />
             </div>
 
-            <button onClick={saveSession} style={{ marginTop: 16, backgroundColor: '#84cc16', color: '#000', border: 'none', borderRadius: 10, padding: '12px 20px', fontSize: FS.base, fontWeight: 600, minHeight: 44, cursor: 'pointer', width: '100%' }}>Chiudi sessione ✓</button>
+            <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ marginTop: 16, backgroundColor: '#84cc16', color: '#000', border: 'none', borderRadius: 10, padding: '12px 20px', fontSize: FS.base, fontWeight: 600, minHeight: 44, width: '100%' }}>Chiudi sessione ✓</TouchablePress>
           </div>
         )}
       </div>
@@ -1217,7 +1284,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
       {restActive && (
         <div onClick={skipRest} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 50, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
           <div style={{ fontSize: FS.sm, textTransform: 'uppercase', letterSpacing: '0.3em', color: 'rgba(255,255,255,0.4)', marginBottom: 16 }}>Recupero</div>
-          <div style={{ fontSize: FS['12rem'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: restRemaining <= 5 ? '#ef4444' : '#84cc16' }}>{restRemaining}</div>
+          <div style={{ fontFamily: FONT_MONO, fontSize: FS['12rem'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: restRemaining <= 5 ? '#ef4444' : '#84cc16' }}>{restRemaining}</div>
           <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.4)', marginTop: 16 }}>Tap ovunque per saltare</div>
         </div>
       )}
@@ -1246,7 +1313,7 @@ const BigNumberInput = ({ value, onChange, step = 1, placeholder, unit, isPreFil
           if (isValidInput) onChange(v);
         }}
         placeholder={placeholder}
-        style={{ width: '100%', backgroundColor: 'transparent', textAlign: 'center', fontSize: FS.numBig, fontWeight: 700, color: isPreFilled ? 'rgba(255,255,255,0.55)' : '#fff', border: 'none', outline: 'none', padding: '10px 4px 2px', minHeight: 50, boxSizing: 'border-box', fontStyle: isPreFilled ? 'italic' : 'normal' }}
+        style={{ width: '100%', backgroundColor: 'transparent', textAlign: 'center', fontSize: FS.numBig, fontWeight: 700, fontFamily: FONT_MONO, color: isPreFilled ? 'rgba(255,255,255,0.55)' : '#fff', border: 'none', outline: 'none', padding: '10px 4px 2px', minHeight: 50, boxSizing: 'border-box', fontStyle: isPreFilled ? 'italic' : 'normal' }}
       />
       {unit && <div style={{ textAlign: 'center', fontSize: FS.tiny, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: -2, marginBottom: 4 }}>{unit}</div>}
       <div style={{ display: 'flex', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
@@ -1322,7 +1389,7 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
           </div>
         </div>
 
-        <button onClick={saveSession} style={{ ...btnPrimary, marginTop: 16, backgroundColor: '#a855f7', color: '#fff' }}>Chiudi sessione ✓</button>
+        <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ ...btnPrimary, marginTop: 16, backgroundColor: '#a855f7', color: '#fff' }}>Chiudi sessione ✓</TouchablePress>
       </div>
     </div>
   );
@@ -1379,14 +1446,14 @@ const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
 
         <div style={{ ...cardLarge, marginBottom: 24, textAlign: 'center', padding: 24, backgroundColor: currentPhase.intense ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', borderColor: currentPhase.intense ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)' }}>
           <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.4)' }}>{currentPhase.phase}</div>
-          <div style={{ fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
+          <div style={{ fontFamily: FONT_MONO, fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
           <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)', marginTop: 16 }}>{currentPhase.target}</div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-          <button onClick={() => setRunning(r => !r)} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
+          <TouchablePress onClick={() => { haptic('light'); setRunning(r => !r); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
             {running ? <><Pause size={20} fill="currentColor" /> Pausa</> : <><Play size={20} fill="currentColor" /> Avvia</>}
-          </button>
+          </TouchablePress>
           <button onClick={() => { if (phaseIdx < task.structure.length - 1) { const ni = phaseIdx + 1; setPhaseIdx(ni); setSecondsLeft(task.structure[ni].duration); } }} style={{ ...btnSecondary, padding: 16 }}>Salta fase →</button>
         </div>
 
@@ -1402,7 +1469,7 @@ const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
           </div>
         </div>
 
-        <button onClick={saveSession} style={{ ...btnPrimary, marginTop: 16 }}>Chiudi sessione ✓</button>
+        <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ ...btnPrimary, marginTop: 16 }}>Chiudi sessione ✓</TouchablePress>
       </div>
     </div>
   );
@@ -1515,15 +1582,15 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
         {currentPhase && (
           <div style={{ ...cardLarge, marginBottom: 24, textAlign: 'center', padding: 24, backgroundColor: currentPhase.intense ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', borderColor: currentPhase.intense ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)' }}>
             <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.4)' }}>{currentPhase.phase}</div>
-            <div style={{ fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
+            <div style={{ fontFamily: FONT_MONO, fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
             <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)', marginTop: 16 }}>{currentPhase.target}</div>
           </div>
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-          <button onClick={() => setRunning(r => !r)} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
+          <TouchablePress onClick={() => { haptic('light'); setRunning(r => !r); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
             {running ? <><Pause size={20} fill="currentColor" /> Pausa</> : <><Play size={20} fill="currentColor" /> Avvia</>}
-          </button>
+          </TouchablePress>
           <button onClick={() => { if (phaseIdx < structure.length - 1) { const ni = phaseIdx + 1; setPhaseIdx(ni); setSecondsLeft(structure[ni].duration); } }} style={{ ...btnSecondary, padding: 16 }}>Salta fase →</button>
         </div>
 
@@ -1539,7 +1606,7 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
           </div>
         </div>
 
-        <button onClick={saveSession} style={{ ...btnPrimary, marginTop: 16 }}>Chiudi sessione ✓</button>
+        <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ ...btnPrimary, marginTop: 16 }}>Chiudi sessione ✓</TouchablePress>
       </div>
     </div>
   );
@@ -1589,7 +1656,7 @@ const SliderField = ({ label: lbl, value, setValue, min, max, step = 1, suffix =
   <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.sm, marginBottom: 8 }}>
       <span style={{ color: 'rgba(255,255,255,0.7)' }}>{lbl}</span>
-      <span style={{ color: '#fff', fontWeight: 600, fontSize: FS.lg }}>{value}{suffix}</span>
+      <span style={{ color: '#fff', fontWeight: 600, fontSize: FS.lg, fontFamily: FONT_MONO }}>{value}{suffix}</span>
     </div>
     <input type="range" min={min} max={max} step={step} value={value} onChange={e => setValue(parseFloat(e.target.value))} style={{ width: '100%', accentColor: reverse ? '#f87171' : '#84cc16', height: 44 }} />
   </div>
@@ -1629,7 +1696,7 @@ const GoalsTab = ({ goals, prs, onGloss, profile, saveProfile }) => {
             {Object.entries(prs).map(([lift, pr]) => (
               <div key={lift} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                 <div style={{ fontSize: FS.sm }}>{lift.split('(')[0].trim()}</div>
-                <div style={{ fontSize: FS.base, fontWeight: 600, color: '#fbbf24' }}>{pr.weight}kg × {pr.reps}</div>
+                <div style={{ fontFamily: FONT_MONO, fontSize: FS.base, fontWeight: 600, color: COLORS.success }}>{pr.weight}kg × {pr.reps}</div>
               </div>
             ))}
           </div>

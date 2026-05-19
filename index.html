@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
   <title>Longevity</title>
 
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" />
+
   <!-- PWA -->
   <link rel="manifest" href="./manifest.json" />
   <meta name="theme-color" content="#0a0a0a" />
@@ -26,6 +31,9 @@
     * { touch-action: manipulation; }
     /* Loading state mentre Babel compila */
     .loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; font-size: 18px; color: rgba(255,255,255,0.6); }
+    /* Tab fade-in */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .tab-content { animation: fadeIn 200ms ease-out; }
   </style>
 </head>
 <body>
