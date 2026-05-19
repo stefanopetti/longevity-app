@@ -44,7 +44,9 @@ const DEFAULT_PROFILE = {
   supplements: [],
   customGoalTargets: {},
   lastBackupReminder: '',
-  cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '', bloodDate: '',
+  cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '',
+  hsCRP: '', insulin: '', homa: '', testTot: '', testFree: '', shbg: '', tsh: '', ft3: '', ferritin: '', egfr: '',
+  bloodDate: '',
   _migrated_v8: false
 };
 
@@ -241,6 +243,9 @@ const DAYS_IT = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
 
 // Soglie evidence-based per markers ematici (longevità + cardiovascolare)
 const BLOOD_MARKERS = {
+  hsCRP: { label: 'hs-CRP', unit: 'mg/L', evalLow: 0, evalHigh: 1.0, optimal: 'Ottimale: <1.0', warn: 'Borderline 1.0-3.0', high: 'Alto: >3.0 (infiammazione sistemica)' },
+  insulin: { label: 'Insulina a digiuno', unit: 'µU/mL', evalLow: 0, evalHigh: 8, optimal: 'Ottimale: <8', warn: 'Borderline 8-12', high: 'Alto: >12 (insulino-resistenza)' },
+  homa: { label: 'HOMA-IR', unit: '', evalLow: 0, evalHigh: 1.5, optimal: 'Ottimale: <1.5', warn: 'Borderline 1.5-2.5', high: 'Alto: >2.5 (IR conclamata)' },
   ldl: { label: 'LDL', unit: 'mg/dL', evalLow: 0, evalHigh: 100, optimal: 'Ottimale: <100', warn: 'Borderline 100-130', high: 'Alto: >130' },
   apoB: { label: 'ApoB', unit: 'mg/dL', evalLow: 0, evalHigh: 90, optimal: 'Ottimale: <90', warn: 'Borderline 90-110', high: 'Alto: >110' },
   hdl: { label: 'HDL', unit: 'mg/dL', evalLow: 40, evalHigh: Infinity, optimal: 'Buono: >40 (>50 ottimale)', warn: 'Basso: 30-40', high: '' },
@@ -249,13 +254,44 @@ const BLOOD_MARKERS = {
   hba1c: { label: 'HbA1c', unit: '%', evalLow: 0, evalHigh: 5.7, optimal: 'Ottimale: <5.7', warn: 'Prediabete: 5.7-6.4', high: 'Diabete: ≥6.5' },
   glucose: { label: 'Glicemia', unit: 'mg/dL', evalLow: 0, evalHigh: 100, optimal: 'Ottimale: <100', warn: 'Borderline 100-125', high: 'Alto: ≥126' },
   vitDBlood: { label: 'Vit. D', unit: 'ng/mL', evalLow: 30, evalHigh: 100, optimal: 'Ottimale: 30-60', warn: 'Insufficiente: 20-30', high: 'Carente: <20' },
-  homocysteine: { label: 'Omocisteina', unit: 'µmol/L', evalLow: 0, evalHigh: 10, optimal: 'Ottimale: <10', warn: 'Borderline 10-15', high: 'Alto: >15' }
+  homocysteine: { label: 'Omocisteina', unit: 'µmol/L', evalLow: 0, evalHigh: 10, optimal: 'Ottimale: <10', warn: 'Borderline 10-15', high: 'Alto: >15' },
+  testTot: { label: 'Testosterone totale', unit: 'ng/dL', evalLow: 500, evalHigh: 1000, optimal: 'Ottimale: 500-1000', warn: 'Basso: 350-500', high: 'Alto: >1000' },
+  testFree: { label: 'Testosterone libero', unit: 'pg/mL', evalLow: 16, evalHigh: 31, optimal: 'Ottimale: 16-31', warn: 'Basso: 10-16', high: 'Alto: >31' },
+  shbg: { label: 'SHBG', unit: 'nmol/L', evalLow: 20, evalHigh: 50, optimal: 'Ottimale: 20-50', warn: 'Borderline 50-70', high: 'Alto: >70' },
+  tsh: { label: 'TSH', unit: 'mU/L', evalLow: 1.0, evalHigh: 2.5, optimal: 'Ottimale: 1.0-2.5', warn: 'Borderline 2.5-4.5', high: 'Alto: >4.5 (ipotiroidismo)' },
+  ft3: { label: 'Free T3', unit: 'pg/mL', evalLow: 3.0, evalHigh: 3.5, optimal: 'Ottimale: 3.0-3.5', warn: 'Borderline 2.3-3.0', high: 'Alto: >4.0' },
+  ferritin: { label: 'Ferritina', unit: 'ng/mL', evalLow: 70, evalHigh: 150, optimal: 'Ottimale: 70-150', warn: 'Borderline 30-70 o 150-200', high: 'Alto: >200 (sovraccarico/infiammazione)' },
+  egfr: { label: 'eGFR', unit: 'mL/min/1.73m²', evalLow: 90, evalHigh: Infinity, optimal: 'Ottimale: >90', warn: 'Borderline 60-90', high: 'Basso: <60 (funzionalità renale ridotta)' }
 };
 
 const evalMarker = (key, value) => {
   const m = BLOOD_MARKERS[key];
   const v = parseFloat(value);
   if (!m || !v) return null;
+  if (key === 'testTot') {
+    if (v < 350) return { status: 'high', color: '#f87171', msg: 'Molto basso, considera consulto' };
+    if (v < 500) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (v <= 1000) return { status: 'ok', color: '#84cc16', msg: m.optimal };
+    return { status: 'warn', color: '#fbbf24', msg: m.high };
+  }
+  if (key === 'testFree') {
+    if (v < 10) return { status: 'high', color: '#f87171', msg: 'Molto basso, considera consulto' };
+    if (v < 16) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (v <= 31) return { status: 'ok', color: '#84cc16', msg: m.optimal };
+    return { status: 'warn', color: '#fbbf24', msg: m.high };
+  }
+  if (key === 'ferritin') {
+    if (v < 30) return { status: 'high', color: '#f87171', msg: 'Carente: <30' };
+    if (v < 70) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (v <= 150) return { status: 'ok', color: '#84cc16', msg: m.optimal };
+    if (v <= 200) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    return { status: 'high', color: '#f87171', msg: m.high };
+  }
+  if (key === 'egfr') {
+    if (v < 60) return { status: 'high', color: '#f87171', msg: m.high };
+    if (v <= 90) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    return { status: 'ok', color: '#84cc16', msg: m.optimal };
+  }
   if (key === 'hdl') {
     if (v >= 40) return { status: 'ok', color: '#84cc16', msg: m.optimal };
     return { status: 'warn', color: '#fbbf24', msg: m.warn };
@@ -269,10 +305,17 @@ const evalMarker = (key, value) => {
     if (key === 'hba1c' && v < 6.5) return { status: 'warn', color: '#fbbf24', msg: m.warn };
     if (key === 'glucose' && v < 126) return { status: 'warn', color: '#fbbf24', msg: m.warn };
     if (key === 'homocysteine' && v < 15) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'hsCRP' && v <= 3) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'insulin' && v <= 12) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'homa' && v <= 2.5) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'shbg' && v <= 70) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'tsh' && v <= 4.5) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'ft3' && v <= 4) return { status: 'warn', color: '#fbbf24', msg: m.high };
     return { status: 'high', color: '#f87171', msg: m.high };
   }
   if (v < m.evalLow) {
     if (key === 'vitDBlood' && v >= 20) return { status: 'warn', color: '#fbbf24', msg: m.warn };
+    if (key === 'ft3' && v >= 2.3) return { status: 'warn', color: '#fbbf24', msg: m.warn };
     return { status: 'high', color: '#f87171', msg: m.high };
   }
   return null;
@@ -316,6 +359,16 @@ const alertIntense = () => { playBeep(1200, 150); setTimeout(() => playBeep(1200
 // ============ UTILS ============
 const fmtTime = (s) => { const m = Math.floor(s / 60), sec = s % 60; return `${m}:${sec.toString().padStart(2, '0')}`; };
 const parseDecimal = (v) => parseFloat(String(v).replace(',', '.')) || 0;
+
+// Formula Brzycki: 1RM stimato da kg sollevati x reps fatti.
+const calc1RM = (weight, reps) => {
+  const w = parseDecimal(weight);
+  const r = parseInt(reps);
+  if (!w || !r || r < 1) return null;
+  if (r === 1) return Math.round(w * 10) / 10;
+  if (r > 15) return null;
+  return Math.round((w / (1.0278 - 0.0278 * r)) * 10) / 10;
+};
 
 const calcAge = (birthDate) => {
   if (!birthDate) return null;
@@ -603,18 +656,57 @@ const getPRs = (history) => {
   KEY_LIFTS.forEach(lift => {
     const all = (history.workouts || []).filter(w => w.exercises?.some(e => e.name === lift));
     if (all.length === 0) return;
-    let maxW = 0, maxReps = 0;
+    let max1RM = 0, maxData = null;
     all.forEach(w => {
       const ex = w.exercises.find(e => e.name === lift);
       (ex.sets || []).forEach(s => {
-        const w_ = parseDecimal(s.weight);
-        const r = parseInt(s.reps) || 0;
-        if (w_ > maxW || (w_ === maxW && r > maxReps)) { maxW = w_; maxReps = r; }
+        const oneRM = calc1RM(s.weight, s.reps);
+        if (oneRM && oneRM > max1RM) {
+          max1RM = oneRM;
+          maxData = { weight: parseDecimal(s.weight), reps: parseInt(s.reps), oneRM, date: w.date };
+        }
       });
     });
-    if (maxW > 0) prs[lift] = { weight: maxW, reps: maxReps };
+    if (maxData) prs[lift] = maxData;
   });
   return prs;
+};
+
+const checkNewPR = (history, justSavedWorkout) => {
+  if (!justSavedWorkout?.exercises) return null;
+  const previousHistory = {
+    workouts: (history.workouts || []).filter(w => w !== justSavedWorkout && w.date !== justSavedWorkout.date)
+  };
+  const previousPRs = getPRs(previousHistory);
+  let bestNew = null;
+
+  KEY_LIFTS.forEach(lift => {
+    const ex = justSavedWorkout.exercises.find(e => e.name === lift);
+    if (!ex) return;
+    (ex.sets || []).forEach(s => {
+      const oneRM = calc1RM(s.weight, s.reps);
+      if (!oneRM) return;
+      const previous = previousPRs[lift]?.oneRM;
+      if (!previous) return;
+      if (oneRM > previous + 0.5 && (!bestNew || oneRM > bestNew.oneRM)) {
+        bestNew = { lift, oneRM, weight: parseDecimal(s.weight), reps: parseInt(s.reps) };
+      }
+    });
+  });
+
+  return bestNew;
+};
+
+const getPRTrend = (history, lift) => {
+  return (history.workouts || [])
+    .filter(w => w.exercises?.some(e => e.name === lift))
+    .map(w => {
+      const ex = w.exercises.find(e => e.name === lift);
+      const best = Math.max(0, ...(ex.sets || []).map(s => calc1RM(s.weight, s.reps) || 0));
+      return best ? { date: w.date, oneRM: best } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
 };
 
 // ============ GOALS ============
@@ -706,6 +798,26 @@ const GlossaryModal = ({ termKey, onClose }) => {
         </div>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', whiteSpace: 'pre-line', lineHeight: 1.6 }}>{g.body}</div>
         <button onClick={onClose} style={{ ...btnPrimary, marginTop: 20 }}>Ho capito ✓</button>
+      </div>
+    </div>
+  );
+};
+
+const PRCelebrationModal = ({ pr, onExit }) => {
+  useEffect(() => {
+    if (pr) vibrate(200);
+  }, [pr]);
+
+  if (!pr) return null;
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.88)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ backgroundColor: '#141414', border: `1px solid ${COLORS.success}`, borderRadius: 20, padding: 24, maxWidth: 380, width: '100%', textAlign: 'center', boxShadow: '0 20px 80px rgba(16,185,129,0.18)' }}>
+        <div style={{ fontSize: 60, lineHeight: 1, marginBottom: 12 }}>🏆</div>
+        <h3 style={{ fontSize: 22, fontWeight: 700, color: COLORS.success, marginBottom: 12 }}>NUOVO PERSONAL RECORD!</h3>
+        <div style={{ fontSize: FS.base, color: '#fff', fontWeight: 600, marginBottom: 14 }}>{pr.lift}</div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: FS['2xl'], fontWeight: 700, color: '#fff', marginBottom: 8 }}>{pr.weight}kg × {pr.reps} reps</div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: FS.lg, color: COLORS.success, fontWeight: 700, marginBottom: 22 }}>1RM stimato: {pr.oneRM}kg</div>
+        <TouchablePress onClick={onExit} style={{ ...btnPrimary, backgroundColor: COLORS.success }}>Avanti 💪</TouchablePress>
       </div>
     </div>
   );
@@ -857,7 +969,7 @@ function LongevityAppV4() {
       <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: '24px 16px 0' }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
         {tab === 'tasks' && <TasksTab history={history} onStart={(id) => setCurrentTask(id)} />}
-        {tab === 'goals' && <GoalsTab goals={goals} prs={prs} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} />}
+        {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} />}
         {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} />}
         {tab === 'profile' && <ProfileTab profile={profile} saveProfile={saveProfile} measurements={measurements} onReport={() => setShowReport(true)} onReset={() => setShowReset(true)} onExport={exportData} onImport={importData} onGloss={setGlossOpen} />}
       </div>
@@ -1150,6 +1262,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
   const [restRemaining, setRestRemaining] = useState(0);
   const [restActive, setRestActive] = useState(false);
   const [sessionFeeling, setSessionFeeling] = useState(5);
+  const [prModal, setPrModal] = useState(null);
   const restRef = useRef(null);
 
   useEffect(() => {
@@ -1166,7 +1279,12 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
   const saveSession = async () => {
     const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, exercises: exercises.map(ex => ({ name: ex.name, sets: ex.sets.map(s => ({ weight: s.weight, reps: s.reps, rir: s.rir })) })), feeling: sessionFeeling };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
-    onExit();
+    const newPR = checkNewPR(history, w);
+    if (newPR) {
+      setPrModal(newPR);
+    } else {
+      onExit();
+    }
   };
 
   const exTypeLabel = (type) => type === 'time' ? 'sec' : type === 'bodyweight' ? 'BW' : 'kg';
@@ -1288,6 +1406,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
           <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.4)', marginTop: 16 }}>Tap ovunque per saltare</div>
         </div>
       )}
+      <PRCelebrationModal pr={prModal} onExit={onExit} />
     </div>
   );
 };
@@ -1663,7 +1782,36 @@ const SliderField = ({ label: lbl, value, setValue, min, max, step = 1, suffix =
 );
 
 // ============ GOALS + PR ============
-const GoalsTab = ({ goals, prs, onGloss, profile, saveProfile }) => {
+const PRSparkline = ({ history, lift }) => {
+  const points = getPRTrend(history, lift);
+  if (points.length < 2) {
+    return <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.45)', marginTop: 8 }}>Aggiungi 1 sessione per vedere trend</div>;
+  }
+
+  const width = 100;
+  const height = 30;
+  const pad = 3;
+  const values = points.map(p => p.oneRM);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const coords = points.map((p, i) => {
+    const x = pad + (i / (points.length - 1)) * (width - pad * 2);
+    const y = height - pad - ((p.oneRM - min) / range) * (height - pad * 2);
+    return { x, y };
+  });
+  const d = coords.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const last = coords[coords.length - 1];
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ marginTop: 8, display: 'block' }}>
+      <path d={d} fill="none" stroke={COLORS.success} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={last.x} cy={last.y} r="3" fill={COLORS.success} />
+    </svg>
+  );
+};
+
+const GoalsTab = ({ goals, prs, history, onGloss, profile, saveProfile }) => {
   const saveCustomTarget = (goalId, t3, t6, t12) => {
     saveProfile({ ...profile, customGoalTargets: { ...(profile.customGoalTargets || {}), [goalId]: { t3, t6, t12 } } });
   };
@@ -1694,9 +1842,15 @@ const GoalsTab = ({ goals, prs, onGloss, profile, saveProfile }) => {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {Object.entries(prs).map(([lift, pr]) => (
-              <div key={lift} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                <div style={{ fontSize: FS.sm }}>{lift.split('(')[0].trim()}</div>
-                <div style={{ fontFamily: FONT_MONO, fontSize: FS.base, fontWeight: 600, color: COLORS.success }}>{pr.weight}kg × {pr.reps}</div>
+              <div key={lift} style={{ padding: 14, border: `1px solid ${COLORS.success}55`, borderRadius: 12, backgroundColor: 'rgba(16,185,129,0.06)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: FS.sm, fontWeight: 600, lineHeight: 1.3 }}>{lift.split('(')[0].trim()}</div>
+                    <div style={{ fontFamily: FONT_MONO, fontSize: FS.base, fontWeight: 600, color: '#fff', marginTop: 6 }}>{pr.weight}kg × {pr.reps} reps</div>
+                    <div style={{ fontFamily: FONT_MONO, fontSize: FS.sm, fontWeight: 700, color: COLORS.success, marginTop: 4 }}>1RM: {pr.oneRM}kg</div>
+                  </div>
+                  <PRSparkline history={history} lift={lift} />
+                </div>
               </div>
             ))}
           </div>
@@ -2015,16 +2169,31 @@ const ProfileTab = ({ profile, saveProfile, measurements, onReport, onReset, onE
         })()}
 
         <Field label="Data ultimo esame" value={profile.bloodDate} unit="" onChange={v => update('bloodDate', v)} type="date" />
+        <BloodGroupHeader>🔥 Infiammazione e metabolismo</BloodGroupHeader>
+        <BloodField fieldKey="hsCRP" label="hs-CRP" value={profile.hsCRP} unit="mg/L" onChange={v => update('hsCRP', v)} />
+        <BloodField fieldKey="insulin" label="Insulina a digiuno" value={profile.insulin} unit="µU/mL" onChange={v => update('insulin', v)} />
+        <BloodField fieldKey="homa" label="HOMA-IR" value={profile.homa} unit="" onChange={v => update('homa', v)} />
+        <BloodGroupHeader>❤️ Lipidi e cardiovascolare</BloodGroupHeader>
         <BloodField fieldKey="cholTotal" label="Colesterolo totale" value={profile.cholTotal} unit="mg/dL" onChange={v => update('cholTotal', v)} />
         <BloodField fieldKey="ldl" label="LDL" value={profile.ldl} unit="mg/dL" onChange={v => update('ldl', v)} />
         <BloodField fieldKey="hdl" label="HDL" value={profile.hdl} unit="mg/dL" onChange={v => update('hdl', v)} />
         <BloodField fieldKey="trigl" label="Trigliceridi" value={profile.trigl} unit="mg/dL" onChange={v => update('trigl', v)} />
         <BloodField fieldKey="apoB" label="ApoB" value={profile.apoB} unit="mg/dL" onChange={v => update('apoB', v)} />
         <BloodField fieldKey="lpa" label="Lp(a)" value={profile.lpa} unit="nmol/L" onChange={v => update('lpa', v)} />
-        <BloodField fieldKey="homocysteine" label="Omocisteina" value={profile.homocysteine} unit="µmol/L" onChange={v => update('homocysteine', v)} />
+        <BloodGroupHeader>🍬 Glicemia</BloodGroupHeader>
         <BloodField fieldKey="glucose" label="Glicemia" value={profile.glucose} unit="mg/dL" onChange={v => update('glucose', v)} />
         <BloodField fieldKey="hba1c" label="HbA1c" value={profile.hba1c} unit="%" onChange={v => update('hba1c', v)} />
+        <BloodGroupHeader>⚡ Ormonale</BloodGroupHeader>
+        <BloodField fieldKey="testTot" label="Testosterone totale" value={profile.testTot} unit="ng/dL" onChange={v => update('testTot', v)} />
+        <BloodField fieldKey="testFree" label="Testosterone libero" value={profile.testFree} unit="pg/mL" onChange={v => update('testFree', v)} />
+        <BloodField fieldKey="shbg" label="SHBG" value={profile.shbg} unit="nmol/L" onChange={v => update('shbg', v)} />
+        <BloodField fieldKey="tsh" label="TSH" value={profile.tsh} unit="mU/L" onChange={v => update('tsh', v)} />
+        <BloodField fieldKey="ft3" label="Free T3" value={profile.ft3} unit="pg/mL" onChange={v => update('ft3', v)} />
+        <BloodGroupHeader>🩸 Altri marker</BloodGroupHeader>
+        <BloodField fieldKey="homocysteine" label="Omocisteina" value={profile.homocysteine} unit="µmol/L" onChange={v => update('homocysteine', v)} />
         <BloodField fieldKey="vitDBlood" label="Vit. D" value={profile.vitDBlood} unit="ng/mL" onChange={v => update('vitDBlood', v)} />
+        <BloodField fieldKey="ferritin" label="Ferritina" value={profile.ferritin} unit="ng/mL" onChange={v => update('ferritin', v)} />
+        <BloodField fieldKey="egfr" label="eGFR" value={profile.egfr} unit="mL/min/1.73m²" onChange={v => update('egfr', v)} />
       </Section>
 
       <button onClick={onReport} style={btnPrimary}>
@@ -2068,6 +2237,12 @@ const Field = ({ label: lbl, value, unit, onChange, type = 'text', placeholder =
       {unit && <span style={{ color: 'rgba(255,255,255,0.4)' }}>{unit}</span>}
     </div>
     <input type={type} inputMode={type === 'number' ? 'decimal' : 'text'} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
+  </div>
+);
+
+const BloodGroupHeader = ({ children }) => (
+  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.15em', marginTop: 16, marginBottom: 8 }}>
+    {children}
   </div>
 );
 
@@ -2163,7 +2338,7 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
 
   if (Object.keys(prs).length > 0) {
     r += `\n## Personal Records\n`;
-    Object.entries(prs).forEach(([lift, pr]) => { r += `- ${lift}: ${pr.weight}kg × ${pr.reps}\n`; });
+    Object.entries(prs).forEach(([lift, pr]) => { r += `- ${lift}: ${pr.weight}kg × ${pr.reps} (1RM stimato ${pr.oneRM}kg)\n`; });
   }
 
   r += `\n## Carichi e progressione (ultime 4 settimane)\n`;
@@ -2204,14 +2379,28 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
     });
   }
 
-  if (profile.cholTotal || profile.ldl) {
+  if (profile.hsCRP || profile.insulin || profile.homa || profile.cholTotal || profile.ldl || profile.hdl || profile.trigl || profile.apoB || profile.lpa || profile.glucose || profile.hba1c || profile.testTot || profile.testFree || profile.shbg || profile.tsh || profile.ft3 || profile.homocysteine || profile.vitDBlood || profile.ferritin || profile.egfr) {
     r += `\n## Esami sangue (${profile.bloodDate || 'data n/d'})\n`;
-    if (profile.cholTotal) r += `- Colesterolo tot: ${profile.cholTotal}\n`;
-    if (profile.ldl) r += `- LDL: ${profile.ldl}\n`;
-    if (profile.hdl) r += `- HDL: ${profile.hdl}\n`;
-    if (profile.apoB) r += `- ApoB: ${profile.apoB}\n`;
-    if (profile.lpa) r += `- Lp(a): ${profile.lpa}\n`;
+    if (profile.hsCRP) r += `- hs-CRP: ${profile.hsCRP} mg/L\n`;
+    if (profile.insulin) r += `- Insulina a digiuno: ${profile.insulin} µU/mL\n`;
+    if (profile.homa) r += `- HOMA-IR: ${profile.homa}\n`;
+    if (profile.cholTotal) r += `- Colesterolo tot: ${profile.cholTotal} mg/dL\n`;
+    if (profile.ldl) r += `- LDL: ${profile.ldl} mg/dL\n`;
+    if (profile.hdl) r += `- HDL: ${profile.hdl} mg/dL\n`;
+    if (profile.trigl) r += `- Trigliceridi: ${profile.trigl} mg/dL\n`;
+    if (profile.apoB) r += `- ApoB: ${profile.apoB} mg/dL\n`;
+    if (profile.lpa) r += `- Lp(a): ${profile.lpa} nmol/L\n`;
+    if (profile.glucose) r += `- Glicemia: ${profile.glucose} mg/dL\n`;
     if (profile.hba1c) r += `- HbA1c: ${profile.hba1c}%\n`;
+    if (profile.testTot) r += `- Testosterone totale: ${profile.testTot} ng/dL\n`;
+    if (profile.testFree) r += `- Testosterone libero: ${profile.testFree} pg/mL\n`;
+    if (profile.shbg) r += `- SHBG: ${profile.shbg} nmol/L\n`;
+    if (profile.tsh) r += `- TSH: ${profile.tsh} mU/L\n`;
+    if (profile.ft3) r += `- Free T3: ${profile.ft3} pg/mL\n`;
+    if (profile.homocysteine) r += `- Omocisteina: ${profile.homocysteine} µmol/L\n`;
+    if (profile.vitDBlood) r += `- Vit. D: ${profile.vitDBlood} ng/mL\n`;
+    if (profile.ferritin) r += `- Ferritina: ${profile.ferritin} ng/mL\n`;
+    if (profile.egfr) r += `- eGFR: ${profile.egfr} mL/min/1.73m²\n`;
   }
 
   r += `\n## Attività extra del mese (compilare a mano)\n_Aggiungi qui hiking, sci, padel, camminate lunghe, ecc._\n`;
