@@ -312,7 +312,7 @@ const BLOOD_MARKERS = {
 
 const evalMarker = (key, value) => {
   const m = BLOOD_MARKERS[key];
-  const v = parseFloat(value);
+  const v = parseDecimal(value);
   if (!m || !v) return null;
   if (key === 'testTot') {
     if (v < 350) return { status: 'high', color: '#f87171', msg: 'Molto basso, considera consulto' };
@@ -405,7 +405,12 @@ const alertIntense = () => { playBeep(1200, 150); setTimeout(() => playBeep(1200
 // ============ UTILS ============
 const fmtTime = (s) => { const m = Math.floor(s / 60), sec = s % 60; return `${m}:${sec.toString().padStart(2, '0')}`; };
 const parseDecimal = (v) => parseFloat(String(v).replace(',', '.')) || 0;
-const fmtNumber = (n, d = 1) => Number.isInteger(n) ? String(n) : n.toFixed(d);
+const isDecimalInput = (v) => /^-?\d*[.,]?\d*$/.test(String(v));
+const displayDecimalInput = (v) => v == null ? '' : String(v).replace('.', ',');
+const updateDecimalInput = (value, onChange) => {
+  if (isDecimalInput(value)) onChange(value);
+};
+const fmtNumber = (n, d = 1) => (Number.isInteger(n) ? String(n) : n.toFixed(d)).replace('.', ',');
 
 // Formula Brzycki: 1RM stimato da kg sollevati x reps fatti.
 const calc1RM = (weight, reps) => {
@@ -763,18 +768,18 @@ const calcGoals = (profile, measurements) => {
   const latest = getLatestMeasurementSnapshot(measurements);
   const baseline = sorted[0] || {};
 
-  const vo2 = parseFloat(latest.vo2max);
+  const vo2 = parseDecimal(latest.vo2max);
   if (vo2) goals.push({ id: 'vo2', label: 'VO2max', current: vo2, t3: +(vo2 * 1.05).toFixed(1), t6: +(vo2 * 1.11).toFixed(1), t12: +(vo2 * 1.165).toFixed(1), unit: 'ml/kg/min', better: 'up', baseline: baseline.vo2max, glossKey: 'VO2max' });
-  const mm = parseFloat(latest.muscleMassKg);
+  const mm = parseDecimal(latest.muscleMassKg);
   if (mm) goals.push({ id: 'mm', label: 'Massa muscolare', current: mm, t3: null, t6: +(mm + 1.5).toFixed(1), t12: +(mm + 2.75).toFixed(1), unit: 'kg', better: 'up', baseline: baseline.muscleMassKg });
-  const bf = parseFloat(latest.bodyFat);
+  const bf = parseDecimal(latest.bodyFat);
   if (bf) {
     if (bf > 20) goals.push({ id: 'bf', label: '% Grasso corporeo', current: bf, t3: +(bf - 1.5).toFixed(1), t6: +(bf - 3).toFixed(1), t12: Math.max(15, +(bf - 5).toFixed(1)), unit: '%', better: 'down' });
     else goals.push({ id: 'bf', label: '% Grasso (mantenimento)', current: bf, t3: bf, t6: bf, t12: bf, unit: '%', better: 'maintain' });
   }
-  const hrR = parseFloat(latest.hrRest);
+  const hrR = parseDecimal(latest.hrRest);
   if (hrR) goals.push({ id: 'hrR', label: 'FC riposo', current: hrR, t3: null, t6: hrR - 3, t12: hrR - 5, unit: 'bpm', better: 'down' });
-  const hrv = parseFloat(latest.hrv);
+  const hrv = parseDecimal(latest.hrv);
   if (hrv) goals.push({ id: 'hrv', label: 'HRV', current: hrv, t3: +(hrv * 1.05).toFixed(0), t6: +(hrv * 1.10).toFixed(0), t12: +(hrv * 1.12).toFixed(0), unit: 'ms', better: 'up', glossKey: 'HRV' });
 
   const customTargets = profile?.customGoalTargets || {};
@@ -1472,8 +1477,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
 const BigNumberInput = ({ value, onChange, step = 1, placeholder, unit, isPreFilled = false }) => {
   const displayVal = (v) => {
     if (!v) return '';
-    // Mostra con virgola italiana (sostituisci . con ,)
-    return String(v).replace('.', ',');
+    return displayDecimalInput(v);
   };
   const dec = () => onChange(Math.max(0, (parseDecimal(value) - step)).toString());
   const inc = () => onChange(((parseDecimal(value)) + step).toString());
@@ -1485,8 +1489,7 @@ const BigNumberInput = ({ value, onChange, step = 1, placeholder, unit, isPreFil
         value={displayVal(value)}
         onChange={e => {
           const v = e.target.value;
-          const isValidInput = /^[0-9]*[.,]?[0-9]*$/.test(v);
-          if (isValidInput) onChange(v);
+          updateDecimalInput(v, onChange);
         }}
         placeholder={placeholder}
         style={{ width: '100%', backgroundColor: 'transparent', textAlign: 'center', fontSize: FS.numBig, fontWeight: 700, fontFamily: FONT_MONO, color: isPreFilled ? 'rgba(255,255,255,0.55)' : '#fff', border: 'none', outline: 'none', padding: '10px 4px 2px', minHeight: 50, boxSizing: 'border-box', fontStyle: isPreFilled ? 'italic' : 'normal' }}
@@ -1635,7 +1638,7 @@ const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
 
         <div style={{ ...cardLarge, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={label}>Dati sessione</div>
-          <input type="number" placeholder="FC media (da Apple Watch)" value={hrAvg} onChange={e => setHrAvg(e.target.value)} style={{ ...inputStyle, fontSize: FS.lg }} />
+          <input type="text" inputMode="decimal" placeholder="FC media (da Apple Watch)" value={displayDecimalInput(hrAvg)} onChange={e => updateDecimalInput(e.target.value, setHrAvg)} style={{ ...inputStyle, fontSize: FS.lg }} />
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
               <span style={{ color: 'rgba(255,255,255,0.5)' }}>Sensazione</span>
@@ -1772,7 +1775,7 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
 
         <div style={{ ...cardLarge, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={label}>Dati sessione</div>
-          <input type="number" placeholder="FC media (da Apple Watch)" value={hrAvg} onChange={e => setHrAvg(e.target.value)} style={{ ...inputStyle, fontSize: FS.lg }} />
+          <input type="text" inputMode="decimal" placeholder="FC media (da Apple Watch)" value={displayDecimalInput(hrAvg)} onChange={e => updateDecimalInput(e.target.value, setHrAvg)} style={{ ...inputStyle, fontSize: FS.lg }} />
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
               <span style={{ color: 'rgba(255,255,255,0.5)' }}>Sensazione</span>
@@ -2088,7 +2091,7 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
   const t6val = typeof goal.t6 === 'number' ? goal.t6 : null;
   let progress = 0;
   if (cur !== null && t6val !== null && goal.baseline) {
-    const baseline = parseFloat(goal.baseline);
+    const baseline = parseDecimal(goal.baseline);
     if (goal.better === 'up' && t6val > baseline) progress = Math.max(0, Math.min(100, ((cur - baseline) / (t6val - baseline)) * 100));
     if (goal.better === 'down' && t6val < baseline) progress = Math.max(0, Math.min(100, ((baseline - cur) / (baseline - t6val)) * 100));
   }
@@ -2114,7 +2117,7 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
             {goal.isCustom && <span style={{ fontSize: FS.tiny, color: '#f59e0b', marginLeft: 4 }}>custom</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-            <span style={{ fontSize: FS['2xl'], fontWeight: 600 }}>{goal.current ?? '—'}</span>
+            <span style={{ fontSize: FS['2xl'], fontWeight: 600 }}>{goal.current != null ? fmtNumber(goal.current) : '—'}</span>
             <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{goal.unit}</span>
           </div>
         </div>
@@ -2129,7 +2132,7 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
             {[['3 mesi', editT3, setEditT3], ['6 mesi', editT6, setEditT6], ['12 mesi', editT12, setEditT12]].map(([lbl, val, setter]) => (
               <div key={lbl}>
                 <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>{lbl}</div>
-                <input type="number" inputMode="decimal" value={val} onChange={e => setter(e.target.value)} style={{ ...inputStyle, padding: '8px 6px', fontSize: FS.sm, textAlign: 'center' }} />
+                <input type="text" inputMode="decimal" value={displayDecimalInput(val)} onChange={e => updateDecimalInput(e.target.value, setter)} style={{ ...inputStyle, padding: '8px 6px', fontSize: FS.sm, textAlign: 'center' }} />
               </div>
             ))}
           </div>
@@ -2145,15 +2148,15 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, textAlign: 'center', marginBottom: 12 }}>
             <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
               <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>3 mesi</div>
-              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t3 ?? '—'}</div>
+              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t3 != null ? fmtNumber(goal.t3) : '—'}</div>
             </div>
             <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
               <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>6 mesi</div>
-              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t6 ?? '—'}</div>
+              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t6 != null ? fmtNumber(goal.t6) : '—'}</div>
             </div>
             <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
               <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>12 mesi</div>
-              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t12 ?? '—'}</div>
+              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t12 != null ? fmtNumber(goal.t12) : '—'}</div>
             </div>
           </div>
           {cur !== null && t6val !== null && goal.baseline && (
@@ -2238,7 +2241,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
                 <span style={{ color: 'rgba(255,255,255,0.4)' }}>Data</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
-                <input type="number" inputMode="decimal" value={newM[f.key]?.value || ''} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), value: e.target.value } })} style={inputStyle} placeholder={f.unit === 'ml/kg/min' ? 'da Salute → Cardio Fitness' : 'da Salute o Withings'} />
+                <input type="text" inputMode="decimal" value={displayDecimalInput(newM[f.key]?.value || '')} onChange={e => updateDecimalInput(e.target.value, value => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), value } }))} style={inputStyle} placeholder={f.unit === 'ml/kg/min' ? 'da Salute → Cardio Fitness' : 'da Salute o Withings'} />
                 <input type="date" value={newM[f.key]?.date || todayKey()} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), date: e.target.value } })} style={compactDateInputStyle} />
               </div>
             </div>
@@ -2467,18 +2470,28 @@ const Section = ({ title, open, toggle, children }) => (
   </div>
 );
 
-const Field = ({ label: lbl, value, unit, onChange, type = 'text', placeholder = '', glossKey, onGloss }) => (
-  <div>
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
-      <span style={{ color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: 2 }}>
-        {lbl}
-        {glossKey && <InfoButton glossKey={glossKey} onClick={onGloss} />}
-      </span>
-      {unit && <span style={{ color: 'rgba(255,255,255,0.4)' }}>{unit}</span>}
+const Field = ({ label: lbl, value, unit, onChange, type = 'text', placeholder = '', glossKey, onGloss }) => {
+  const inputType = type === 'number' ? 'text' : type;
+  const inputMode = type === 'number' ? 'decimal' : undefined;
+  const inputValue = type === 'number' ? displayDecimalInput(value) : value;
+  const handleChange = e => {
+    if (type === 'number') updateDecimalInput(e.target.value, onChange);
+    else onChange(e.target.value);
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
+        <span style={{ color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: 2 }}>
+          {lbl}
+          {glossKey && <InfoButton glossKey={glossKey} onClick={onGloss} />}
+        </span>
+        {unit && <span style={{ color: 'rgba(255,255,255,0.4)' }}>{unit}</span>}
+      </div>
+      <input type={inputType} inputMode={inputMode} value={inputValue} onChange={handleChange} placeholder={placeholder} style={type === 'date' ? compactDateInputStyle : inputStyle} />
     </div>
-    <input type={type} inputMode={type === 'number' ? 'decimal' : 'text'} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={type === 'date' ? compactDateInputStyle : inputStyle} />
-  </div>
-);
+  );
+};
 
 const BloodGroupHeader = ({ children }) => (
   <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.15em', marginTop: 16, marginBottom: 8 }}>
@@ -2499,7 +2512,7 @@ const BloodField = ({ fieldKey, label: lbl, value, unit, onChange, date, onDateC
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
         <div style={{ position: 'relative', minWidth: 0 }}>
-          <input type="number" inputMode="decimal" value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, paddingRight: evaluation ? 36 : 12, borderColor: evaluation ? evaluation.color + '50' : 'rgba(255,255,255,0.1)' }} />
+          <input type="text" inputMode="decimal" value={displayDecimalInput(value)} onChange={e => updateDecimalInput(e.target.value, onChange)} style={{ ...inputStyle, paddingRight: evaluation ? 36 : 12, borderColor: evaluation ? evaluation.color + '50' : 'rgba(255,255,255,0.1)' }} />
           {evaluation && (
             <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, borderRadius: '50%', backgroundColor: evaluation.color }} />
           )}
@@ -2536,7 +2549,7 @@ const ReportScreen = ({ profile, history, measurements, dailyLogs, goals, health
   );
 };
 
-const avg = (arr) => arr.length ? arr.reduce((a, b) => a + (parseFloat(b) || 0), 0) / arr.length : 0;
+const avg = (arr) => arr.length ? arr.reduce((a, b) => a + parseDecimal(b), 0) / arr.length : 0;
 const fmt = (n, d = 1) => n ? n.toFixed(d) : '—';
 
 const generateReport = (profile, history, measurements, dailyLogs, goals, health, streak, prs) => {
