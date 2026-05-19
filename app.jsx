@@ -359,6 +359,7 @@ const alertIntense = () => { playBeep(1200, 150); setTimeout(() => playBeep(1200
 // ============ UTILS ============
 const fmtTime = (s) => { const m = Math.floor(s / 60), sec = s % 60; return `${m}:${sec.toString().padStart(2, '0')}`; };
 const parseDecimal = (v) => parseFloat(String(v).replace(',', '.')) || 0;
+const fmtNumber = (n, d = 1) => Number.isInteger(n) ? String(n) : n.toFixed(d);
 
 // Formula Brzycki: 1RM stimato da kg sollevati x reps fatti.
 const calc1RM = (weight, reps) => {
@@ -1177,6 +1178,8 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
       <button onClick={() => onGloss('Algoritmo')} style={{ ...btnSecondary, fontSize: FS.sm, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
         <Info size={16} /> Come funziona l'algoritmo
       </button>
+
+      <RecentHistoryCard history={history} compact />
     </div>
   );
 };
@@ -1811,6 +1814,167 @@ const PRSparkline = ({ history, lift }) => {
   );
 };
 
+const Sparkline = ({ points, color = '#84cc16', height = 30, width = 100 }) => {
+  const clean = (points || []).map(p => ({ ...p, value: parseDecimal(p.value) })).filter(p => p.value);
+  if (clean.length < 2) {
+    return <div style={{ height, width, fontSize: 10, color: 'rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>—</div>;
+  }
+
+  const values = clean.map(p => p.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const padding = 4;
+  const w = width - padding * 2;
+  const h = height - padding * 2;
+  const pathPoints = clean.map((p, i) => {
+    const x = padding + (i / (clean.length - 1)) * w;
+    const y = padding + h - ((p.value - min) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const linePath = `M ${pathPoints.join(' L ')}`;
+  const lastX = padding + w;
+  const lastY = padding + h - ((values[values.length - 1] - min) / range) * h;
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block' }}>
+      <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={lastX} cy={lastY} r="2.5" fill={color} />
+    </svg>
+  );
+};
+
+const METRIC_OPTIMAL = {
+  vo2max: { min: 38, max: 50, note: 'Uomo 50-59 anni: <30 a rischio, 35-45 buono, >45 ottimo' },
+  hrRest: { min: 50, max: 70, note: 'Atleti 50-60, sedentari 70-80, allenato 50-65 bpm' },
+  hrv: { min: 30, max: 100, note: 'Trend mensile > valore assoluto. Cala 5-10% con stress' },
+  bodyFat: { min: 12, max: 18, note: 'Uomo 50+: 11-22% normale, 12-18% atletico' },
+  bpSys: { min: 110, max: 120, note: '<120 ottimale, 120-129 elevata, ≥130 ipertensione' },
+  bpDia: { min: 70, max: 80, note: '<80 ottimale, 80-89 elevata, ≥90 ipertensione' }
+};
+
+const calcTrendLine = (points) => {
+  const clean = (points || []).map(p => parseDecimal(p.value)).filter(Boolean);
+  const n = clean.length;
+  if (n < 2) return null;
+  const xs = clean.map((_, i) => i);
+  const ys = clean;
+  const sumX = xs.reduce((a, b) => a + b, 0);
+  const sumY = ys.reduce((a, b) => a + b, 0);
+  const sumXY = xs.reduce((s, x, i) => s + x * ys[i], 0);
+  const sumX2 = xs.reduce((s, x) => s + x * x, 0);
+  const denom = n * sumX2 - sumX * sumX;
+  if (!denom) return null;
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  return { slope, intercept };
+};
+
+const FullChartModal = ({ metric, points, onClose }) => {
+  const clean = (points || []).map(p => ({ ...p, value: parseDecimal(p.value) })).filter(p => p.value).sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!metric) return null;
+
+  const width = 340;
+  const height = 180;
+  const pad = { top: 18, right: 16, bottom: 34, left: 42 };
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
+  const values = clean.map(p => p.value);
+  const optimal = metric.optimalRange;
+  const minData = values.length ? Math.min(...values) : 0;
+  const maxData = values.length ? Math.max(...values) : 1;
+  const min = Math.min(minData, optimal?.min ?? minData);
+  const max = Math.max(maxData, optimal?.max ?? maxData);
+  const range = max - min || 1;
+  const xFor = (i) => clean.length < 2 ? pad.left + chartW / 2 : pad.left + (i / (clean.length - 1)) * chartW;
+  const yFor = (v) => pad.top + chartH - ((v - min) / range) * chartH;
+  const dataPath = clean.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(p.value).toFixed(1)}`).join(' ');
+  const trend = clean.length >= 3 ? calcTrendLine(clean) : null;
+  const trendPath = trend ? `M ${xFor(0).toFixed(1)} ${yFor(trend.intercept).toFixed(1)} L ${xFor(clean.length - 1).toFixed(1)} ${yFor(trend.intercept + trend.slope * (clean.length - 1)).toFixed(1)}` : '';
+  const optimalY1 = optimal ? yFor(optimal.max) : 0;
+  const optimalY2 = optimal ? yFor(optimal.min) : 0;
+  const first = clean[0];
+  const last = clean[clean.length - 1];
+  const delta = first && last ? ((last.value - first.value) / first.value) * 100 : 0;
+  const months = first && last ? Math.max(0, Math.round((new Date(last.date) - new Date(first.date)) / (1000 * 60 * 60 * 24 * 30))) : 0;
+  const avgVal = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+  const labelEvery = clean.length > 8 ? 3 : clean.length > 4 ? 2 : 1;
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.86)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#151515', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 20, padding: 18, width: '90%', maxWidth: 390, color: '#fff' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+          <div>
+            <h3 style={{ fontSize: FS.xl, fontWeight: 700, margin: 0 }}>{metric.label}</h3>
+            <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.45)', marginTop: 4 }}>{metric.unit}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.65)', cursor: 'pointer', padding: 4 }}><X size={22} /></button>
+        </div>
+
+        <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block', overflow: 'visible' }}>
+          <line x1={pad.left} y1={pad.top} x2={pad.left} y2={pad.top + chartH} stroke="rgba(255,255,255,0.16)" />
+          <line x1={pad.left} y1={pad.top + chartH} x2={pad.left + chartW} y2={pad.top + chartH} stroke="rgba(255,255,255,0.16)" />
+          {optimal && <rect x={pad.left} y={Math.min(optimalY1, optimalY2)} width={chartW} height={Math.abs(optimalY2 - optimalY1)} fill={COLORS.success} opacity="0.15" />}
+          <text x={pad.left - 8} y={pad.top + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,0.45)">{fmtNumber(max)}</text>
+          <text x={pad.left - 8} y={pad.top + chartH} textAnchor="end" fontSize="10" fill="rgba(255,255,255,0.45)">{fmtNumber(min)}</text>
+          {clean.length >= 2 && <path d={dataPath} fill="none" stroke={metric.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />}
+          {clean.length === 1 && <circle cx={xFor(0)} cy={yFor(clean[0].value)} r="4" fill={metric.color} />}
+          {clean.map((p, i) => (
+            <React.Fragment key={`${p.date}-${i}`}>
+              <circle cx={xFor(i)} cy={yFor(p.value)} r="3.5" fill="#151515" stroke={metric.color} strokeWidth="2" />
+              {(i % labelEvery === 0 || i === clean.length - 1) && (
+                <text x={xFor(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="rgba(255,255,255,0.4)">
+                  {new Date(p.date).toLocaleDateString('it-IT', { month: 'short', year: '2-digit' })}
+                </text>
+              )}
+            </React.Fragment>
+          ))}
+          {trend && <path d={trendPath} fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="1.8" strokeDasharray="5 4" strokeLinecap="round" />}
+        </svg>
+
+        {clean.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14, fontSize: FS.xs, color: 'rgba(255,255,255,0.68)', lineHeight: 1.45 }}>
+            <div>Primo valore: {fmtNumber(first.value)} · Ultimo: {fmtNumber(last.value)}</div>
+            <div>Variazione: {delta > 0 ? '+' : ''}{delta.toFixed(1)}% in {months} mesi</div>
+            <div>Media: {fmtNumber(avgVal)} · Min: {fmtNumber(minData)} · Max: {fmtNumber(maxData)}</div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 14, fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>Aggiungi misurazioni per vedere il grafico</div>
+        )}
+
+        {optimal?.note && (
+          <div style={{ marginTop: 14, padding: 10, borderRadius: 10, backgroundColor: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.18)', fontSize: FS.xs, color: 'rgba(255,255,255,0.78)', lineHeight: 1.45 }}>
+            💡 Range ottimale per uomo 50+: {optimal.min}-{optimal.max}. {optimal.note}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const RecentHistoryCard = ({ history, compact = false }) => {
+  if (!history.workouts?.length) return null;
+  return (
+    <div style={compact ? card : cardLarge}>
+      <div style={{ ...label, marginBottom: 12 }}>Storico recente</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {history.workouts.slice().reverse().slice(0, compact ? 5 : 8).map((w, i) => {
+          const t = TASKS[w.taskId];
+          return (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div>
+                <div style={{ fontSize: FS.sm }}>{t?.icon} {w.name}</div>
+                <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)' }}>{new Date(w.date).toLocaleDateString('it-IT')}</div>
+              </div>
+              <Check size={18} color={t?.color || '#84cc16'} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const GoalsTab = ({ goals, prs, history, onGloss, profile, saveProfile }) => {
   const saveCustomTarget = (goalId, t3, t6, t12) => {
     saveProfile({ ...profile, customGoalTargets: { ...(profile.customGoalTargets || {}), [goalId]: { t3, t6, t12 } } });
@@ -1953,23 +2117,32 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
 const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
   const [showNew, setShowNew] = useState(false);
   const [newM, setNewM] = useState({ date: todayKey(), weight: '', bodyFat: '', muscleMassKg: '', vo2max: '', hrRest: '', hrv: '', bpSys: '', bpDia: '' });
+  const [chartModal, setChartModal] = useState(null);
   const sorted = (measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const fields = [
-    { key: 'weight', label: 'Peso', unit: 'kg', better: 'maintain' },
-    { key: 'bodyFat', label: '% Grasso', unit: '%', better: 'down' },
-    { key: 'muscleMassKg', label: 'Massa muscolare', unit: 'kg', better: 'up' },
-    { key: 'vo2max', label: 'VO2max', unit: 'ml/kg/min', better: 'up', glossKey: 'VO2max' },
-    { key: 'hrRest', label: 'FC riposo', unit: 'bpm', better: 'down' },
-    { key: 'hrv', label: 'HRV', unit: 'ms', better: 'up', glossKey: 'HRV' },
-    { key: 'bpSys', label: 'Pressione sistolica', unit: 'mmHg', better: 'down' },
-    { key: 'bpDia', label: 'Pressione diastolica', unit: 'mmHg', better: 'down' }
+    { key: 'weight', label: 'Peso', unit: 'kg', better: 'maintain', color: COLORS.recovery },
+    { key: 'bodyFat', label: '% Grasso', unit: '%', better: 'down', color: COLORS.recovery, optimalRange: METRIC_OPTIMAL.bodyFat },
+    { key: 'muscleMassKg', label: 'Massa muscolare', unit: 'kg', better: 'up', color: COLORS.forza },
+    { key: 'vo2max', label: 'VO2max', unit: 'ml/kg/min', better: 'up', glossKey: 'VO2max', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.vo2max },
+    { key: 'hrRest', label: 'FC riposo', unit: 'bpm', better: 'down', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.hrRest },
+    { key: 'hrv', label: 'HRV', unit: 'ms', better: 'up', glossKey: 'HRV', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.hrv },
+    { key: 'bpSys', label: 'Pressione sistolica', unit: 'mmHg', better: 'down', color: COLORS.alert, optimalRange: METRIC_OPTIMAL.bpSys },
+    { key: 'bpDia', label: 'Pressione diastolica', unit: 'mmHg', better: 'down', color: COLORS.alert, optimalRange: METRIC_OPTIMAL.bpDia }
   ];
 
+  const getPointsFor = (key, limit = 12) => {
+    const points = (measurements || [])
+      .filter(m => m[key] !== undefined && m[key] !== '')
+      .map(m => ({ date: m.date, value: m[key] }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    return limit ? points.slice(-limit) : points;
+  };
+
   const calcTrend = (key, better) => {
-    const series = sorted.filter(m => m[key]).map(m => parseFloat(m[key]));
+    const series = getPointsFor(key).map(p => parseDecimal(p.value)).filter(Boolean);
     if (series.length < 2) return null;
-    const latest = series[0], previous = series[series.length - 1];
+    const latest = series[series.length - 1], previous = series[0];
     const delta = ((latest - previous) / previous) * 100;
     const positive = better === 'up' ? delta > 0 : better === 'down' ? delta < 0 : Math.abs(delta) < 5;
     return { delta, positive, latest, previous };
@@ -2017,29 +2190,48 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
       )}
 
       {fields.map(f => {
+        const points = getPointsFor(f.key);
+        const latestPoint = points[points.length - 1];
+        if (!latestPoint) return null;
+        const latest = parseDecimal(latestPoint.value);
         const trend = calcTrend(f.key, f.better);
-        if (!trend) return null;
-        const Icon = Math.abs(trend.delta) < 2 ? Minus : (trend.delta > 0 ? TrendingUp : TrendingDown);
+        const Icon = !trend || Math.abs(trend.delta) < 2 ? Minus : (trend.delta > 0 ? TrendingUp : TrendingDown);
+        const trendColor = !trend ? 'rgba(255,255,255,0.45)' : trend.positive ? '#84cc16' : '#f87171';
         return (
-          <div key={f.key} style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 2 }}>
+          <TouchablePress key={f.key} onClick={() => { haptic('light'); setChartModal(f); }} style={{ ...card, width: '100%', textAlign: 'left', color: '#fff', borderColor: `${f.color}44`, minHeight: 44 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <span>
                   {f.label}
-                  {f.glossKey && <InfoButton glossKey={f.glossKey} onClick={onGloss} />}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-                  <span style={{ fontSize: FS['2xl'], fontWeight: 600 }}>{trend.latest}</span>
-                  <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{f.unit}</span>
-                </div>
+                </span>
+                {f.glossKey && (
+                  <span
+                    onClick={(e) => { e.stopPropagation(); onGloss(f.glossKey); }}
+                    style={{ color: 'rgba(255,255,255,0.4)', padding: 4, display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    <Info size={16} />
+                  </span>
+                )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: trend.positive ? '#84cc16' : '#f87171' }}>
-                <Icon size={18} />
-                <span style={{ fontSize: FS.sm, fontWeight: 600 }}>{trend.delta > 0 ? '+' : ''}{trend.delta.toFixed(1)}%</span>
-              </div>
+              <span style={{ fontSize: FS.lg, color: 'rgba(255,255,255,0.4)' }}>→</span>
             </div>
-            <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)', marginTop: 6 }}>Da {trend.previous} → {trend.latest} (su {sorted.filter(m => m[f.key]).length} misurazioni)</div>
-          </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+              <span style={{ fontSize: FS['2xl'], fontWeight: 700, fontFamily: FONT_MONO }}>{fmtNumber(latest)}</span>
+              <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{f.unit}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: trendColor }}>
+                <Icon size={18} />
+                  <span style={{ fontSize: FS.sm, fontWeight: 600 }}>{trend ? `${trend.delta > 0 ? '+' : ''}${trend.delta.toFixed(1)}%` : '—'}</span>
+                </div>
+                <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>
+                  {trend ? `Da ${fmtNumber(trend.previous)} → ${fmtNumber(trend.latest)} (${points.length} mis.)` : `${points.length} misurazione`}
+                </div>
+              </div>
+              <Sparkline points={points} color={f.color} />
+            </div>
+          </TouchablePress>
         );
       })}
 
@@ -2050,25 +2242,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
         </div>
       )}
 
-      {history.workouts?.length > 0 && (
-        <div style={cardLarge}>
-          <div style={{ ...label, marginBottom: 12 }}>Ultime sessioni</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {history.workouts.slice().reverse().slice(0, 8).map((w, i) => {
-              const t = TASKS[w.taskId];
-              return (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div>
-                    <div style={{ fontSize: FS.sm }}>{t?.icon} {w.name}</div>
-                    <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)' }}>{new Date(w.date).toLocaleDateString('it-IT')}</div>
-                  </div>
-                  <Check size={18} color={t?.color || '#84cc16'} />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {chartModal && <FullChartModal metric={chartModal} points={getPointsFor(chartModal.key, 12)} onClose={() => setChartModal(null)} />}
     </div>
   );
 };
