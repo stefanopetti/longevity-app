@@ -39,10 +39,12 @@ const FS = {
 
 // ============ DATA ============
 const DEFAULT_PROFILE = {
-  name: '', age: '', weight: '', height: '',
+  name: '', birthDate: '', weight: '', height: '',
   hrMax: '',
-  omega3: '', magnesium: '', creatine: '', vitD: '', otherSupp: '',
-  cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '', bloodDate: ''
+  supplements: [],
+  customGoalTargets: {},
+  cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '', bloodDate: '',
+  _migrated_v8: false
 };
 
 // ============ GLOSSARIO TERMINI CRITICI ============
@@ -303,6 +305,44 @@ const alertIntense = () => { playBeep(1200, 150); setTimeout(() => playBeep(1200
 // ============ UTILS ============
 const fmtTime = (s) => { const m = Math.floor(s / 60), sec = s % 60; return `${m}:${sec.toString().padStart(2, '0')}`; };
 const parseDecimal = (v) => parseFloat(String(v).replace(',', '.')) || 0;
+
+const calcAge = (birthDate) => {
+  if (!birthDate) return null;
+  const today = new Date();
+  const birth = new Date(birthDate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+};
+
+const migrateProfile = (old) => {
+  if (!old || old._migrated_v8) return old;
+  const p = { ...DEFAULT_PROFILE, ...old };
+  // age → birthDate
+  if (old.age && !p.birthDate) {
+    const a = parseInt(old.age);
+    if (a > 0 && a < 120) p.birthDate = `${new Date().getFullYear() - a}-01-01`;
+  }
+  delete p.age;
+  // supplementi statici → array
+  const suppMap = [
+    { key: 'omega3', label: 'Omega-3 (EPA+DHA)' },
+    { key: 'magnesium', label: 'Magnesio' },
+    { key: 'creatine', label: 'Creatina' },
+    { key: 'vitD', label: 'Vitamina D' },
+    { key: 'otherSupp', label: 'Altri' }
+  ];
+  if (!Array.isArray(p.supplements)) p.supplements = [];
+  suppMap.forEach(({ key, label }) => {
+    if (old[key]) p.supplements.push({ name: label, dose: old[key], freq: 'giornaliero', startDate: '' });
+    delete p[key];
+  });
+  if (!p.customGoalTargets) p.customGoalTargets = {};
+  p._migrated_v8 = true;
+  return p;
+};
+
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
 
@@ -572,7 +612,6 @@ const calcGoals = (profile, measurements) => {
   const sorted = (measurements || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   const latest = sorted[sorted.length - 1] || {};
   const baseline = sorted[0] || {};
-  const w = parseFloat(profile.weight);
 
   const vo2 = parseFloat(latest.vo2max);
   if (vo2) goals.push({ id: 'vo2', label: 'VO2max', current: vo2, t3: +(vo2 * 1.05).toFixed(1), t6: +(vo2 * 1.11).toFixed(1), t12: +(vo2 * 1.165).toFixed(1), unit: 'ml/kg/min', better: 'up', baseline: baseline.vo2max, glossKey: 'VO2max' });
@@ -587,11 +626,13 @@ const calcGoals = (profile, measurements) => {
   if (hrR) goals.push({ id: 'hrR', label: 'FC riposo', current: hrR, t3: null, t6: hrR - 3, t12: hrR - 5, unit: 'bpm', better: 'down' });
   const hrv = parseFloat(latest.hrv);
   if (hrv) goals.push({ id: 'hrv', label: 'HRV', current: hrv, t3: +(hrv * 1.05).toFixed(0), t6: +(hrv * 1.10).toFixed(0), t12: +(hrv * 1.12).toFixed(0), unit: 'ms', better: 'up', glossKey: 'HRV' });
-  if (w) {
-    const protTarget = Math.round(w * 1.7);
-    goals.push({ id: 'prot', label: 'Proteine target', current: null, t3: protTarget, t6: protTarget, t12: protTarget, unit: 'g/giorno', better: 'info', info: '1.7 g/kg · tracking esterno (MacroFactor)' });
-  }
-  return goals;
+
+  const customTargets = profile?.customGoalTargets || {};
+  return goals.map(g => {
+    const c = customTargets[g.id];
+    if (c) return { ...g, t3: c.t3 ?? g.t3, t6: c.t6 ?? g.t6, t12: c.t12 ?? g.t12, isCustom: true };
+    return g;
+  });
 };
 
 // ============ STYLES ============
@@ -667,7 +708,9 @@ function LongevityAppV4() {
 
   useEffect(() => {
     (async () => {
-      const p = await storage.get('profile', DEFAULT_PROFILE);
+      const raw = await storage.get('profile', DEFAULT_PROFILE);
+      const p = migrateProfile(raw);
+      if (p !== raw) await storage.set('profile', p);
       const h = await storage.get('history', { workouts: [] });
       const m = await storage.get('measurements', []);
       const d = await storage.get('dailyLogs', {});
@@ -748,9 +791,9 @@ function LongevityAppV4() {
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '24px 16px 0' }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
         {tab === 'tasks' && <TasksTab history={history} onStart={(id) => setCurrentTask(id)} />}
-        {tab === 'goals' && <GoalsTab goals={goals} prs={prs} onGloss={setGlossOpen} />}
+        {tab === 'goals' && <GoalsTab goals={goals} prs={prs} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} />}
         {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} />}
-        {tab === 'profile' && <ProfileTab profile={profile} saveProfile={saveProfile} onReport={() => setShowReport(true)} onReset={() => setShowReset(true)} onExport={exportData} onImport={importData} onGloss={setGlossOpen} />}
+        {tab === 'profile' && <ProfileTab profile={profile} saveProfile={saveProfile} measurements={measurements} onReport={() => setShowReport(true)} onReset={() => setShowReset(true)} onExport={exportData} onImport={importData} onGloss={setGlossOpen} />}
       </div>
 
       <BottomNav tab={tab} setTab={setTab} />
@@ -772,7 +815,7 @@ const BottomNav = ({ tab, setTab }) => {
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'tasks', icon: Dumbbell, label: 'Sessioni' },
     { id: 'goals', icon: Target, label: 'Obiettivi' },
-    { id: 'measures', icon: Activity, label: 'Misure' },
+    { id: 'measures', icon: Activity, label: 'Trend' },
     { id: 'profile', icon: User, label: 'Profilo' }
   ];
   return (
@@ -1507,48 +1550,75 @@ const SliderField = ({ label: lbl, value, setValue, min, max, step = 1, suffix =
 );
 
 // ============ GOALS + PR ============
-const GoalsTab = ({ goals, prs, onGloss }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
-    <header style={{ paddingTop: 8 }}>
-      <h1 style={{ fontSize: FS['3xl'], fontWeight: 300 }}>Obiettivi</h1>
-      <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>Target evidence-based</div>
-    </header>
+const GoalsTab = ({ goals, prs, onGloss, profile, saveProfile }) => {
+  const saveCustomTarget = (goalId, t3, t6, t12) => {
+    saveProfile({ ...profile, customGoalTargets: { ...(profile.customGoalTargets || {}), [goalId]: { t3, t6, t12 } } });
+  };
+  const resetCustomTarget = (goalId) => {
+    const next = { ...(profile.customGoalTargets || {}) };
+    delete next[goalId];
+    saveProfile({ ...profile, customGoalTargets: next });
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
+      <header style={{ paddingTop: 8 }}>
+        <h1 style={{ fontSize: FS['3xl'], fontWeight: 300 }}>Obiettivi</h1>
+        <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>Target evidence-based</div>
+      </header>
 
-    {goals.length === 0 ? (
-      <div style={{ ...cardLarge, padding: 24, textAlign: 'center' }}>
-        <Target size={40} color="rgba(255,255,255,0.3)" style={{ margin: '0 auto' }} />
-        <div style={{ marginTop: 12, color: 'rgba(255,255,255,0.6)', fontSize: FS.base }}>Aggiungi misurazioni per vedere gli obiettivi</div>
-      </div>
-    ) : goals.map(g => <GoalCard key={g.id} goal={g} onGloss={onGloss} />)}
-
-    {Object.keys(prs).length > 0 && (
-      <div style={cardLarge}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Award size={20} color="#fbbf24" />
-          <div style={label}>Personal Records</div>
+      {goals.length === 0 ? (
+        <div style={{ ...cardLarge, padding: 24, textAlign: 'center' }}>
+          <Target size={40} color="rgba(255,255,255,0.3)" style={{ margin: '0 auto' }} />
+          <div style={{ marginTop: 12, color: 'rgba(255,255,255,0.6)', fontSize: FS.base }}>Aggiungi misurazioni per vedere gli obiettivi</div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {Object.entries(prs).map(([lift, pr]) => (
-            <div key={lift} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-              <div style={{ fontSize: FS.sm }}>{lift.split('(')[0].trim()}</div>
-              <div style={{ fontSize: FS.base, fontWeight: 600, color: '#fbbf24' }}>{pr.weight}kg × {pr.reps}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    )}
-  </div>
-);
+      ) : goals.map(g => <GoalCard key={g.id} goal={g} onGloss={onGloss} onSaveCustom={saveCustomTarget} onResetCustom={resetCustomTarget} />)}
 
-const GoalCard = ({ goal, onGloss }) => {
+      {Object.keys(prs).length > 0 && (
+        <div style={cardLarge}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Award size={20} color="#fbbf24" />
+            <div style={label}>Personal Records</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {Object.entries(prs).map(([lift, pr]) => (
+              <div key={lift} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ fontSize: FS.sm }}>{lift.split('(')[0].trim()}</div>
+                <div style={{ fontSize: FS.base, fontWeight: 600, color: '#fbbf24' }}>{pr.weight}kg × {pr.reps}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
+  const [editing, setEditing] = useState(false);
+  const [editT3, setEditT3] = useState('');
+  const [editT6, setEditT6] = useState('');
+  const [editT12, setEditT12] = useState('');
+
   const cur = typeof goal.current === 'number' ? goal.current : null;
-  const t6 = typeof goal.t6 === 'number' ? goal.t6 : null;
+  const t6val = typeof goal.t6 === 'number' ? goal.t6 : null;
   let progress = 0;
-  if (cur !== null && t6 !== null && goal.baseline) {
+  if (cur !== null && t6val !== null && goal.baseline) {
     const baseline = parseFloat(goal.baseline);
-    if (goal.better === 'up' && t6 > baseline) progress = Math.max(0, Math.min(100, ((cur - baseline) / (t6 - baseline)) * 100));
-    if (goal.better === 'down' && t6 < baseline) progress = Math.max(0, Math.min(100, ((baseline - cur) / (baseline - t6)) * 100));
+    if (goal.better === 'up' && t6val > baseline) progress = Math.max(0, Math.min(100, ((cur - baseline) / (t6val - baseline)) * 100));
+    if (goal.better === 'down' && t6val < baseline) progress = Math.max(0, Math.min(100, ((baseline - cur) / (baseline - t6val)) * 100));
   }
+
+  const startEditing = () => {
+    setEditT3(goal.t3 != null ? String(goal.t3) : '');
+    setEditT6(goal.t6 != null ? String(goal.t6) : '');
+    setEditT12(goal.t12 != null ? String(goal.t12) : '');
+    setEditing(true);
+  };
+  const saveEdit = () => {
+    onSaveCustom(goal.id, parseDecimal(editT3) || null, parseDecimal(editT6) || null, parseDecimal(editT12) || null);
+    setEditing(false);
+  };
+
   return (
     <div style={cardLarge}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
@@ -1556,32 +1626,57 @@ const GoalCard = ({ goal, onGloss }) => {
           <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 2 }}>
             {goal.label}
             {goal.glossKey && <InfoButton glossKey={goal.glossKey} onClick={onGloss} />}
+            {goal.isCustom && <span style={{ fontSize: FS.tiny, color: '#f59e0b', marginLeft: 4 }}>custom</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
             <span style={{ fontSize: FS['2xl'], fontWeight: 600 }}>{goal.current ?? '—'}</span>
             <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{goal.unit}</span>
           </div>
         </div>
+        {!editing && (
+          <button onClick={startEditing} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: FS.xs, cursor: 'pointer', padding: 4, minHeight: 44 }}>Modifica</button>
+        )}
       </div>
-      {goal.info && <div style={{ fontSize: FS.xs, color: '#84cc16', marginBottom: 8, fontStyle: 'italic' }}>💡 {goal.info}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, textAlign: 'center', marginBottom: 12 }}>
-        <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
-          <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>3 mesi</div>
-          <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t3 ?? '—'}</div>
+
+      {editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {[['3 mesi', editT3, setEditT3], ['6 mesi', editT6, setEditT6], ['12 mesi', editT12, setEditT12]].map(([lbl, val, setter]) => (
+              <div key={lbl}>
+                <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>{lbl}</div>
+                <input type="number" inputMode="decimal" value={val} onChange={e => setter(e.target.value)} style={{ ...inputStyle, padding: '8px 6px', fontSize: FS.sm, textAlign: 'center' }} />
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: goal.isCustom ? '1fr 1fr 1fr' : '1fr 1fr', gap: 8 }}>
+            <button onClick={() => setEditing(false)} style={btnSecondary}>Annulla</button>
+            {goal.isCustom && <button onClick={() => { onResetCustom(goal.id); setEditing(false); }} style={{ ...btnSecondary, color: '#f87171' }}>Reset</button>}
+            <button onClick={saveEdit} style={btnPrimary}>Salva</button>
+          </div>
         </div>
-        <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
-          <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>6 mesi</div>
-          <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t6 ?? '—'}</div>
-        </div>
-        <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
-          <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>12 mesi</div>
-          <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t12 ?? '—'}</div>
-        </div>
-      </div>
-      {cur !== null && t6 !== null && goal.baseline && (
-        <div style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{ height: '100%', backgroundColor: '#84cc16', width: `${progress}%` }} />
-        </div>
+      ) : (
+        <>
+          {goal.info && <div style={{ fontSize: FS.xs, color: '#84cc16', marginBottom: 8, fontStyle: 'italic' }}>💡 {goal.info}</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, textAlign: 'center', marginBottom: 12 }}>
+            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
+              <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>3 mesi</div>
+              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t3 ?? '—'}</div>
+            </div>
+            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
+              <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>6 mesi</div>
+              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t6 ?? '—'}</div>
+            </div>
+            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
+              <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>12 mesi</div>
+              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t12 ?? '—'}</div>
+            </div>
+          </div>
+          {cur !== null && t6val !== null && goal.baseline && (
+            <div style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ height: '100%', backgroundColor: '#84cc16', width: `${progress}%` }} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1625,7 +1720,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 16 }}>
       <header style={{ paddingTop: 8 }}>
-        <h1 style={{ fontSize: FS['3xl'], fontWeight: 300 }}>Misure</h1>
+        <h1 style={{ fontSize: FS['3xl'], fontWeight: 300 }}>Trend</h1>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>Trend mensili</div>
       </header>
 
@@ -1711,11 +1806,55 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
   );
 };
 
+// ============ SUPPLEMENTS MANAGER ============
+const SupplementsManager = ({ supplements, onChange }) => {
+  const list = supplements || [];
+  const FREQ_OPTIONS = ['giornaliero', 'post-workout', '2x settimana', '3x settimana', 'settimanale', 'al bisogno'];
+
+  const update = (i, field, value) => {
+    const next = list.map((s, idx) => idx === i ? { ...s, [field]: value } : s);
+    onChange(next);
+  };
+  const remove = (i) => onChange(list.filter((_, idx) => idx !== i));
+  const add = () => onChange([...list, { name: '', dose: '', freq: 'giornaliero', startDate: '' }]);
+
+  if (list.length === 0) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.4)', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>Nessun supplemento. Tap "+" per aggiungere.</div>
+      <button onClick={add} style={{ ...btnSecondary, fontSize: FS.sm }}>+ Aggiungi supplemento</button>
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {list.map((s, i) => (
+        <div key={i} style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="text" value={s.name} onChange={e => update(i, 'name', e.target.value)} placeholder="Nome (es. Omega-3)" style={{ ...inputStyle, flex: 2, padding: '8px 10px', fontSize: FS.sm }} />
+            <button onClick={() => remove(i)} style={{ background: 'none', border: 'none', color: '#f87171', fontSize: FS.lg, cursor: 'pointer', minWidth: 36, minHeight: 44, flexShrink: 0 }}>×</button>
+          </div>
+          <input type="text" value={s.dose} onChange={e => update(i, 'dose', e.target.value)} placeholder="Dose (es. 2g EPA+DHA)" style={{ ...inputStyle, padding: '8px 10px', fontSize: FS.sm }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <select value={s.freq} onChange={e => update(i, 'freq', e.target.value)} style={{ ...inputStyle, padding: '8px 10px', fontSize: FS.sm }}>
+              {FREQ_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <input type="date" value={s.startDate} onChange={e => update(i, 'startDate', e.target.value)} style={{ ...inputStyle, padding: '8px 10px', fontSize: FS.sm }} />
+          </div>
+        </div>
+      ))}
+      <button onClick={add} style={{ ...btnSecondary, fontSize: FS.sm }}>+ Aggiungi supplemento</button>
+    </div>
+  );
+};
+
 // ============ PROFILE ============
-const ProfileTab = ({ profile, saveProfile, onReport, onReset, onExport, onImport, onGloss }) => {
+const ProfileTab = ({ profile, saveProfile, measurements, onReport, onReset, onExport, onImport, onGloss }) => {
   const [open, setOpen] = useState({ bio: true, supp: false, blood: false });
   const update = (k, v) => saveProfile({ ...profile, [k]: v });
-  const proteinTarget = profile.weight ? Math.round(parseFloat(profile.weight) * 1.7) : 0;
+  const age = calcAge(profile.birthDate);
+  const sortedM = (measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  const latestWeight = sortedM.find(m => m.weight)?.weight;
+  const proteinTarget = latestWeight ? Math.round(parseDecimal(latestWeight) * 1.7) : 0;
   const fileRef = useRef();
 
   return (
@@ -1735,21 +1874,16 @@ const ProfileTab = ({ profile, saveProfile, onReport, onReset, onExport, onImpor
 
       <Section title="Anagrafica" open={open.bio} toggle={() => setOpen(s => ({ ...s, bio: !s.bio }))}>
         <Field label="Nome (per saluto in home)" value={profile.name} unit="" onChange={v => update('name', v)} type="text" placeholder="Il tuo nome" />
-        <Field label="Età" value={profile.age} unit="anni" onChange={v => update('age', v)} type="number" />
-        <Field label="Peso" value={profile.weight} unit="kg" onChange={v => update('weight', v)} type="number" placeholder="Aggiorna anche in Misure" />
+        <Field label="Data di nascita" value={profile.birthDate} unit={age !== null ? `${age} anni` : ''} onChange={v => update('birthDate', v)} type="date" />
         <Field label="Altezza" value={profile.height} unit="cm" onChange={v => update('height', v)} type="number" />
-        <Field label="FC max" value={profile.hrMax} unit="bpm" onChange={v => update('hrMax', v)} type="number" placeholder={profile.age ? `Stima: ${220 - parseInt(profile.age)} (220-età)` : '220-età'} glossKey="FCmax" onGloss={onGloss} />
+        <Field label="FC max" value={profile.hrMax} unit="bpm" onChange={v => update('hrMax', v)} type="number" placeholder={age !== null ? `Stima: ${220 - age} (220-età)` : '220-età'} glossKey="FCmax" onGloss={onGloss} />
         <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.5)', marginTop: 4, lineHeight: 1.4, fontStyle: 'italic' }}>
-          💡 VO2max, FC riposo, HRV, peso aggiornato e pressione vanno nella tab <strong>Misure</strong> (cambiano nel tempo).
+          💡 Peso, VO2max, FC riposo, HRV e pressione vanno nella tab <strong>Trend</strong> (cambiano nel tempo).
         </div>
       </Section>
 
       <Section title="Supplementazione" open={open.supp} toggle={() => setOpen(s => ({ ...s, supp: !s.supp }))}>
-        <Field label="Omega-3 (EPA+DHA)" value={profile.omega3} unit="mg" onChange={v => update('omega3', v)} type="text" />
-        <Field label="Magnesio" value={profile.magnesium} unit="" onChange={v => update('magnesium', v)} type="text" placeholder="forma e dose" />
-        <Field label="Creatina" value={profile.creatine} unit="g" onChange={v => update('creatine', v)} type="number" placeholder="3-5g/giorno" />
-        <Field label="Vitamina D" value={profile.vitD} unit="UI" onChange={v => update('vitD', v)} type="number" />
-        <Field label="Altri" value={profile.otherSupp} unit="" onChange={v => update('otherSupp', v)} type="text" />
+        <SupplementsManager supplements={profile.supplements || []} onChange={list => update('supplements', list)} />
       </Section>
 
       <Section title="Esami sangue" open={open.blood} toggle={() => setOpen(s => ({ ...s, blood: !s.blood }))}>
@@ -1877,11 +2011,12 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
   const wk4 = []; for (let i = 0; i < 4; i++) { const d = new Date(); d.setDate(d.getDate() - i * 7); wk4.push(weekKey(d)); }
   const recent = (history.workouts || []).filter(w => wk4.includes(weekKey(new Date(w.date))));
   const checkIns = last7.map(d => dailyLogs[d]?.checkIn).filter(Boolean);
-  const proteinTarget = profile.weight ? Math.round(parseFloat(profile.weight) * 1.7) : 0;
   const latest = (measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0] || {};
+  const reportAge = calcAge(profile.birthDate);
+  const proteinTarget = latest.weight ? Math.round(parseDecimal(latest.weight) * 1.7) : 0;
 
   let r = `# Report Allenamento - ${today}\n\n`;
-  r += `## Profilo\n- Età: ${profile.age || 53} anni · Peso: ${latest.weight || profile.weight || '—'} kg · Altezza: ${profile.height || '—'} cm\n`;
+  r += `## Profilo\n- Età: ${reportAge ?? '—'} anni · Peso: ${latest.weight || '—'} kg · Altezza: ${profile.height || '—'} cm\n`;
   r += `- FC max: ${profile.hrMax || '—'} · FC riposo: ${latest.hrRest || '—'} · VO2max: ${latest.vo2max || '—'}\n`;
   r += `- Pressione: ${latest.bpSys || '—'}/${latest.bpDia || '—'}\n`;
   r += `- Target proteine: ${proteinTarget || '—'}g/giorno (1.7 g/kg)\n\n`;
@@ -1949,12 +2084,11 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
 
   r += `\n## Daily check-in (media 7gg)\n- Sonno: ${fmt(avg(checkIns.map(c => c.sleep)))}h · Energia: ${fmt(avg(checkIns.map(c => c.energy)))}/10 · Soreness: ${fmt(avg(checkIns.map(c => c.soreness)))}/10\n- Check-in compilati: ${checkIns.length}/7\n`;
 
-  if (profile.omega3 || profile.creatine || profile.vitD) {
+  if (profile.supplements && profile.supplements.length > 0) {
     r += `\n## Supplementazione\n`;
-    if (profile.omega3) r += `- Omega-3: ${profile.omega3}\n`;
-    if (profile.magnesium) r += `- Magnesio: ${profile.magnesium}\n`;
-    if (profile.creatine) r += `- Creatina: ${profile.creatine}g\n`;
-    if (profile.vitD) r += `- Vit D: ${profile.vitD} UI\n`;
+    profile.supplements.forEach(s => {
+      if (s.name) r += `- ${s.name}: ${s.dose || '—'} (${s.freq || 'giornaliero'}${s.startDate ? `, da ${s.startDate}` : ''})\n`;
+    });
   }
 
   if (profile.cholTotal || profile.ldl) {
