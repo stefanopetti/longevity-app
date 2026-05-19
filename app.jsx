@@ -753,6 +753,10 @@ const labelTiny = { fontSize: FS.tiny, textTransform: 'uppercase', letterSpacing
 const btnPrimary = { backgroundColor: '#84cc16', color: '#000', borderRadius: 12, padding: 14, fontWeight: 600, fontSize: FS.base, border: 'none', minHeight: 44, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' };
 const btnSecondary = { backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', borderRadius: 12, padding: 14, fontSize: FS.sm, border: 'none', minHeight: 44, cursor: 'pointer' };
 const inputStyle = { width: '100%', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: 12, fontSize: FS.sm, color: '#fff', minHeight: 44, boxSizing: 'border-box' };
+const pageTopPadding = 'calc(24px + env(safe-area-inset-top))';
+const screenTopPadding = 'calc(18px + env(safe-area-inset-top))';
+const pageBottomPadding = 'calc(132px + env(safe-area-inset-bottom))';
+const screenBottomPadding = 'calc(64px + env(safe-area-inset-bottom))';
 
 // ============ HAPTIC + PRESS ============
 const haptic = (type = 'light') => {
@@ -966,8 +970,8 @@ function LongevityAppV4() {
   if (showReport) return <ReportScreen profile={profile} history={history} measurements={measurements} dailyLogs={dailyLogs} goals={goals} health={health} streak={streak} prs={prs} onExit={() => setShowReport(false)} />;
 
   return (
-    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 96 }}>
-      <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: '24px 16px 0' }}>
+    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: pageBottomPadding }}>
+      <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: `${pageTopPadding} 16px 0` }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
         {tab === 'tasks' && <TasksTab history={history} onStart={(id) => setCurrentTask(id)} />}
         {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} />}
@@ -998,8 +1002,8 @@ const BottomNav = ({ tab, setTab }) => {
     { id: 'profile', icon: User, label: 'Profilo' }
   ];
   return (
-    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(10,10,10,0.95)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(255,255,255,0.1)', zIndex: 40, paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', justifyContent: 'space-around', padding: '8px 0' }}>
+    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(10,10,10,0.95)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 -12px 32px rgba(0,0,0,0.35)', zIndex: 40, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', justifyContent: 'space-around', padding: '10px 0 12px' }}>
         {items.map(it => (
           <button key={it.id} onClick={() => setTab(it.id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 12px', minWidth: 60, minHeight: 44, background: 'none', border: 'none', cursor: 'pointer' }}>
             <it.icon size={26} color={tab === it.id ? '#84cc16' : 'rgba(255,255,255,0.5)'} />
@@ -1293,8 +1297,8 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
   const exTypeLabel = (type) => type === 'time' ? 'sec' : type === 'bodyweight' ? 'BW' : 'kg';
 
   return (
-    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 128 }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 0' }}>
+    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
           <div style={label}>{task.icon}</div>
@@ -1479,8 +1483,8 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
     onExit();
   };
   return (
-    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 48 }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 0' }}>
+    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
         <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, marginBottom: 16, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
         <h1 style={{ fontSize: FS['2xl'], fontWeight: 300, marginBottom: 4 }}>{task.icon} {task.name}</h1>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 20 }}>60 minuti con il PT</div>
@@ -1551,7 +1555,7 @@ const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
 
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh' }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 128px' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px ${screenBottomPadding}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
           <div style={label}>{task.icon}</div>
@@ -1660,8 +1664,8 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
   // SCELTA MODE
   if (!mode) {
     return (
-      <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 48 }}>
-        <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 0' }}>
+      <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
+        <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
           <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, marginBottom: 16, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
           <h1 style={{ fontSize: FS['2xl'], fontWeight: 300, marginBottom: 4 }}>{task.icon} {task.name}</h1>
           <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 24 }}>Scegli il tipo di sessione</div>
@@ -1690,7 +1694,7 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
 
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh' }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 128px' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px ${screenBottomPadding}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
           <div style={label}>{task.icon}</div>
@@ -1754,8 +1758,8 @@ const CheckInScreen = ({ dailyLogs, saveDaily, onExit }) => {
   };
 
   return (
-    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 48 }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 0' }}>
+    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
         <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, marginBottom: 16, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
         <h1 style={{ fontSize: FS['3xl'], fontWeight: 300, marginBottom: 4 }}>Check-in</h1>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 24 }}>15 secondi · 3 slider</div>
@@ -2451,8 +2455,8 @@ const ReportScreen = ({ profile, history, measurements, dailyLogs, goals, health
     catch (e) { alert('Tieni premuto il testo per copiare'); }
   };
   return (
-    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: 48 }}>
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 16px 0' }}>
+    <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
           <button onClick={copy} style={{ backgroundColor: '#84cc16', color: '#000', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: FS.sm, fontWeight: 600, minHeight: 44, cursor: 'pointer' }}>Copia ✓</button>
