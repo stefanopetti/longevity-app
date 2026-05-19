@@ -50,6 +50,30 @@ const DEFAULT_PROFILE = {
   _migrated_v8: false
 };
 
+const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'vo2max', 'hrRest', 'hrv', 'bpSys', 'bpDia'];
+
+const emptyMeasurementDraft = () => MEASURE_KEYS.reduce((acc, key) => ({
+  ...acc,
+  [key]: { value: '', date: todayKey() }
+}), {});
+
+const getLatestMeasurementSnapshot = (measurements = []) => {
+  const latest = {};
+  const latestDates = {};
+  const sorted = measurements.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  sorted.forEach(m => {
+    if (!m.date) return;
+    MEASURE_KEYS.forEach(key => {
+      if (m[key] !== undefined && m[key] !== '') {
+        latest[key] = m[key];
+        latestDates[key] = m.date;
+      }
+    });
+  });
+  const dates = Object.values(latestDates).sort((a, b) => new Date(b) - new Date(a));
+  return { ...latest, _dates: latestDates, date: dates[0] || '' };
+};
+
 // ============ GLOSSARIO TERMINI CRITICI ============
 const GLOSSARY = {
   RIR: {
@@ -714,7 +738,7 @@ const getPRTrend = (history, lift) => {
 const calcGoals = (profile, measurements) => {
   const goals = [];
   const sorted = (measurements || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
-  const latest = sorted[sorted.length - 1] || {};
+  const latest = getLatestMeasurementSnapshot(measurements);
   const baseline = sorted[0] || {};
 
   const vo2 = parseFloat(latest.vo2max);
@@ -753,6 +777,10 @@ const labelTiny = { fontSize: FS.tiny, textTransform: 'uppercase', letterSpacing
 const btnPrimary = { backgroundColor: '#84cc16', color: '#000', borderRadius: 12, padding: 14, fontWeight: 600, fontSize: FS.base, border: 'none', minHeight: 44, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' };
 const btnSecondary = { backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', borderRadius: 12, padding: 14, fontSize: FS.sm, border: 'none', minHeight: 44, cursor: 'pointer' };
 const inputStyle = { width: '100%', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: 12, fontSize: FS.sm, color: '#fff', minHeight: 44, boxSizing: 'border-box' };
+const compactDateInputStyle = { ...inputStyle, minWidth: 0, maxWidth: '100%', padding: '10px 8px', fontSize: FS.sm, WebkitAppearance: 'none' };
+const modalOverlayStyle = { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.84)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))', boxSizing: 'border-box', overflowY: 'auto' };
+const modalPanelStyle = { backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 20, padding: 24, width: '100%', maxWidth: 400, maxHeight: 'calc(100vh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom))', overflowY: 'auto', WebkitOverflowScrolling: 'touch', boxSizing: 'border-box' };
+const sessionInstructionStyle = { fontSize: FS.base, color: 'rgba(255,255,255,0.88)', lineHeight: 1.5 };
 const pageTopPadding = 'calc(24px + env(safe-area-inset-top))';
 const screenTopPadding = 'calc(18px + env(safe-area-inset-top))';
 const pageBottomPadding = 'calc(132px + env(safe-area-inset-bottom))';
@@ -795,8 +823,8 @@ const GlossaryModal = ({ termKey, onClose }) => {
   if (!termKey || !GLOSSARY[termKey]) return null;
   const g = GLOSSARY[termKey];
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 20, padding: 24, maxWidth: 400, width: '100%' }}>
+    <div onClick={onClose} style={modalOverlayStyle}>
+      <div onClick={e => e.stopPropagation()} style={modalPanelStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <h3 style={{ fontSize: FS.lg, fontWeight: 600, color: '#84cc16' }}>{g.title}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: 0 }}><X size={22} /></button>
@@ -815,8 +843,8 @@ const PRCelebrationModal = ({ pr, onExit }) => {
 
   if (!pr) return null;
   return (
-    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.88)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ backgroundColor: '#141414', border: `1px solid ${COLORS.success}`, borderRadius: 20, padding: 24, maxWidth: 380, width: '100%', textAlign: 'center', boxShadow: '0 20px 80px rgba(16,185,129,0.18)' }}>
+    <div style={{ ...modalOverlayStyle, backgroundColor: 'rgba(0,0,0,0.88)', zIndex: 120 }}>
+      <div style={{ ...modalPanelStyle, backgroundColor: '#141414', border: `1px solid ${COLORS.success}`, maxWidth: 380, textAlign: 'center', boxShadow: '0 20px 80px rgba(16,185,129,0.18)' }}>
         <div style={{ fontSize: 60, lineHeight: 1, marginBottom: 12 }}>🏆</div>
         <h3 style={{ fontSize: 22, fontWeight: 700, color: COLORS.success, marginBottom: 12 }}>NUOVO PERSONAL RECORD!</h3>
         <div style={{ fontSize: FS.base, color: '#fff', fontWeight: 600, marginBottom: 14 }}>{pr.lift}</div>
@@ -833,8 +861,8 @@ const AdjustmentAlertModal = ({ alert, onDismiss }) => {
   if (!alert) return null;
   const color = alert.severity === 'high' ? '#ef4444' : alert.severity === 'warn' ? '#f59e0b' : '#3b82f6';
   return (
-    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ backgroundColor: '#1a1a1a', border: `1px solid ${color}`, borderRadius: 20, padding: 24, maxWidth: 400, width: '100%' }}>
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalPanelStyle, border: `1px solid ${color}` }}>
         <div style={{ textAlign: 'center', fontSize: '40px', marginBottom: 8 }}>{alert.icon}</div>
         <h3 style={{ fontSize: FS.xl, fontWeight: 600, textAlign: 'center', marginBottom: 12, color }}>{alert.title}</h3>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', whiteSpace: 'pre-line', lineHeight: 1.6, marginBottom: 20 }}>{alert.body}</div>
@@ -1311,7 +1339,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
             <div style={{ fontWeight: 600, color: '#fbbf24', fontSize: FS.lg, marginBottom: 12 }}>🔥 Riscaldamento (10 min)</div>
             <ol style={{ paddingLeft: 20, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {task.warmup.map((step, i) => (
-                <li key={i} style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', lineHeight: 1.4 }}>{step}</li>
+                <li key={i} style={sessionInstructionStyle}>{step}</li>
               ))}
             </ol>
             <button onClick={() => setPhase('work')} style={{ marginTop: 16, backgroundColor: '#f59e0b', color: '#000', border: 'none', borderRadius: 10, padding: '12px 20px', fontSize: FS.base, fontWeight: 600, minHeight: 44, cursor: 'pointer', width: '100%' }}>Riscaldamento fatto, inizia lavoro →</button>
@@ -1343,7 +1371,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
                   <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.9)', marginTop: 4 }}>
                     {ex.suggestion.weight !== null ? `${ex.suggestion.weight}${exTypeLabel(ex.type)} × ${ex.suggestion.reps} reps` : `${ex.suggestion.reps} ${ex.type === 'time' ? 'sec' : 'reps'}`}
                   </div>
-                  <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.6)', marginTop: 4 }}>{ex.suggestion.msg}</div>
+                  <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.72)', marginTop: 4, lineHeight: 1.45 }}>{ex.suggestion.msg}</div>
                 </div>
               )}
 
@@ -1386,7 +1414,7 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
             <div style={{ fontWeight: 600, color: '#60a5fa', fontSize: FS.lg, marginBottom: 12 }}>❄️ Cool-down + Stretching (10 min)</div>
             <ol style={{ paddingLeft: 20, margin: 0, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
               {task.cooldown.map((step, i) => (
-                <li key={i} style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', lineHeight: 1.4 }}>{step}</li>
+                <li key={i} style={sessionInstructionStyle}>{step}</li>
               ))}
             </ol>
 
@@ -1458,8 +1486,8 @@ const ExerciseNoteButton = ({ note }) => {
     <>
       <button onClick={() => setOpen(true)} style={{ background: 'none', border: 'none', color: '#84cc16', padding: 4, cursor: 'pointer', fontSize: FS.xs, display: 'inline-flex', alignItems: 'center', gap: 4 }}>💡 nota</button>
       {open && (
-        <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 20, padding: 24, maxWidth: 380, width: '100%' }}>
+        <div onClick={() => setOpen(false)} style={modalOverlayStyle}>
+          <div onClick={e => e.stopPropagation()} style={{ ...modalPanelStyle, maxWidth: 380 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
               <h3 style={{ fontSize: FS.lg, fontWeight: 600, color: '#84cc16' }}>Nota esercizio</h3>
               <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: 0 }}><X size={22} /></button>
@@ -1492,13 +1520,13 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
         <div style={{ ...cardLarge, backgroundColor: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.3)', marginBottom: 16 }}>
           <div style={{ fontWeight: 600, color: '#a855f7', fontSize: FS.base, marginBottom: 12 }}>🎯 Focus della sessione</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {task.focus.map((f, i) => <div key={i} style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>{f}</div>)}
+            {task.focus.map((f, i) => <div key={i} style={sessionInstructionStyle}>{f}</div>)}
           </div>
         </div>
 
         <div style={{ ...card, backgroundColor: 'rgba(132,204,22,0.08)', borderColor: 'rgba(132,204,22,0.2)', marginBottom: 16 }}>
           <div style={{ fontSize: FS.xs, color: '#84cc16', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>Tip per il PT</div>
-          <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.8)', lineHeight: 1.5 }}>{task.tipForPT}</div>
+          <div style={sessionInstructionStyle}>{task.tipForPT}</div>
         </div>
 
         <div style={{ ...cardLarge, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1571,9 +1599,9 @@ const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
         </div>
 
         <div style={{ ...cardLarge, marginBottom: 24, textAlign: 'center', padding: 24, backgroundColor: currentPhase.intense ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', borderColor: currentPhase.intense ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)' }}>
-          <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.4)' }}>{currentPhase.phase}</div>
+          <div style={{ fontSize: FS.sm, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.55)' }}>{currentPhase.phase}</div>
           <div style={{ fontFamily: FONT_MONO, fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
-          <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)', marginTop: 16 }}>{currentPhase.target}</div>
+          <div style={{ fontSize: FS.base, color: 'rgba(255,255,255,0.82)', marginTop: 16, lineHeight: 1.4 }}>{currentPhase.target}</div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
@@ -1673,12 +1701,12 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <button onClick={() => setMode('walk')} style={{ ...cardLarge, textAlign: 'left', cursor: 'pointer', color: '#fff', border: '1px solid rgba(59,130,246,0.4)', backgroundColor: 'rgba(59,130,246,0.08)' }}>
               <div style={{ fontSize: FS.xl, fontWeight: 600, color: '#60a5fa' }}>🚶 A · Camminata veloce</div>
-              <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.7)', marginTop: 6 }}>30 minuti totali · FC 60-70% max</div>
+              <div style={{ fontSize: FS.base, color: 'rgba(255,255,255,0.78)', marginTop: 6, lineHeight: 1.4 }}>30 minuti totali · FC 60-70% max</div>
               <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>Equivalente a Zone 2 Cardio</div>
             </button>
             <button onClick={() => setMode('tabata')} style={{ ...cardLarge, textAlign: 'left', cursor: 'pointer', color: '#fff', border: '1px solid rgba(239,68,68,0.4)', backgroundColor: 'rgba(239,68,68,0.08)' }}>
               <div style={{ fontSize: FS.xl, fontWeight: 600, color: '#f87171' }}>🔥 B · Tabata bodyweight</div>
-              <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.7)', marginTop: 6 }}>~28 min · 4 round HIIT (burpees/jacks/climbers/squat jumps)</div>
+              <div style={{ fontSize: FS.base, color: 'rgba(255,255,255,0.78)', marginTop: 6, lineHeight: 1.4 }}>~28 min · 4 round HIIT (burpees/jacks/climbers/squat jumps)</div>
               <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>Equivalente a Norwegian 4x4</div>
             </button>
           </div>
@@ -1707,9 +1735,9 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
 
         {currentPhase && (
           <div style={{ ...cardLarge, marginBottom: 24, textAlign: 'center', padding: 24, backgroundColor: currentPhase.intense ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', borderColor: currentPhase.intense ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)' }}>
-            <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.4)' }}>{currentPhase.phase}</div>
+            <div style={{ fontSize: FS.sm, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.55)' }}>{currentPhase.phase}</div>
             <div style={{ fontFamily: FONT_MONO, fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
-            <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)', marginTop: 16 }}>{currentPhase.target}</div>
+            <div style={{ fontSize: FS.base, color: 'rgba(255,255,255,0.82)', marginTop: 16, lineHeight: 1.4 }}>{currentPhase.target}</div>
           </div>
         )}
 
@@ -1905,8 +1933,8 @@ const FullChartModal = ({ metric, points, onClose }) => {
   const labelEvery = clean.length > 8 ? 3 : clean.length > 4 ? 2 : 1;
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.86)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#151515', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 20, padding: 18, width: '90%', maxWidth: 390, color: '#fff' }}>
+    <div onClick={onClose} style={{ ...modalOverlayStyle, backgroundColor: 'rgba(0,0,0,0.86)', zIndex: 120 }}>
+      <div onClick={e => e.stopPropagation()} style={{ ...modalPanelStyle, backgroundColor: '#151515', border: '1px solid rgba(255,255,255,0.14)', padding: 18, maxWidth: 390, color: '#fff' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div>
             <h3 style={{ fontSize: FS.xl, fontWeight: 700, margin: 0 }}>{metric.label}</h3>
@@ -2120,7 +2148,7 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
 // ============ MEASURES ============
 const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
   const [showNew, setShowNew] = useState(false);
-  const [newM, setNewM] = useState({ date: todayKey(), weight: '', bodyFat: '', muscleMassKg: '', vo2max: '', hrRest: '', hrv: '', bpSys: '', bpDia: '' });
+  const [newM, setNewM] = useState(emptyMeasurementDraft);
   const [chartModal, setChartModal] = useState(null);
   const sorted = (measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -2153,11 +2181,13 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
   };
 
   const save = async () => {
-    const m = { ...newM };
-    Object.keys(m).forEach(k => { if (k !== 'date' && m[k] === '') delete m[k]; });
-    if (Object.keys(m).length <= 1) { setShowNew(false); return; }
-    await saveMeasurements([...measurements, m]);
-    setNewM({ date: todayKey(), weight: '', bodyFat: '', muscleMassKg: '', vo2max: '', hrRest: '', hrv: '', bpSys: '', bpDia: '' });
+    const entries = fields
+      .map(f => ({ key: f.key, value: newM[f.key]?.value || '', date: newM[f.key]?.date || todayKey() }))
+      .filter(f => f.value !== '')
+      .map(f => ({ date: f.date, [f.key]: f.value }));
+    if (entries.length === 0) { setShowNew(false); return; }
+    await saveMeasurements([...measurements, ...entries]);
+    setNewM(emptyMeasurementDraft());
     setShowNew(false);
   };
 
@@ -2173,7 +2203,6 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
       {showNew && (
         <div style={{ ...cardLarge, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ fontSize: FS.base, fontWeight: 600 }}>Nuova misurazione</div>
-          <input type="date" value={newM.date} onChange={e => setNewM({ ...newM, date: e.target.value })} style={inputStyle} />
           {fields.map(f => (
             <div key={f.key}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.xs, marginBottom: 4 }}>
@@ -2183,7 +2212,10 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
                 </span>
                 <span style={{ color: 'rgba(255,255,255,0.4)' }}>{f.unit}</span>
               </div>
-              <input type="number" inputMode="decimal" value={newM[f.key]} onChange={e => setNewM({ ...newM, [f.key]: e.target.value })} style={inputStyle} placeholder={f.unit === 'ml/kg/min' ? 'da Salute → Cardio Fitness' : 'da Salute o Withings'} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
+                <input type="number" inputMode="decimal" value={newM[f.key]?.value || ''} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), value: e.target.value } })} style={inputStyle} placeholder={f.unit === 'ml/kg/min' ? 'da Salute → Cardio Fitness' : 'da Salute o Withings'} />
+                <input type="date" value={newM[f.key]?.date || todayKey()} onChange={e => setNewM({ ...newM, [f.key]: { ...(newM[f.key] || {}), date: e.target.value } })} style={compactDateInputStyle} />
+              </div>
             </div>
           ))}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
@@ -2279,11 +2311,11 @@ const SupplementsManager = ({ supplements, onChange }) => {
             <button onClick={() => remove(i)} style={{ background: 'none', border: 'none', color: '#f87171', fontSize: FS.lg, cursor: 'pointer', minWidth: 36, minHeight: 44, flexShrink: 0 }}>×</button>
           </div>
           <input type="text" value={s.dose} onChange={e => update(i, 'dose', e.target.value)} placeholder="Dose (es. 2g EPA+DHA)" style={{ ...inputStyle, padding: '8px 10px', fontSize: FS.sm }} />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
             <select value={s.freq} onChange={e => update(i, 'freq', e.target.value)} style={{ ...inputStyle, padding: '8px 10px', fontSize: FS.sm }}>
               {FREQ_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
             </select>
-            <input type="date" value={s.startDate} onChange={e => update(i, 'startDate', e.target.value)} style={{ ...inputStyle, padding: '8px 10px', fontSize: FS.sm }} />
+            <input type="date" value={s.startDate} onChange={e => update(i, 'startDate', e.target.value)} style={{ ...compactDateInputStyle, padding: '8px 10px' }} />
           </div>
         </div>
       ))}
@@ -2297,8 +2329,7 @@ const ProfileTab = ({ profile, saveProfile, measurements, onReport, onReset, onE
   const [open, setOpen] = useState({ bio: true, supp: false, blood: false });
   const update = (k, v) => saveProfile({ ...profile, [k]: v });
   const age = calcAge(profile.birthDate);
-  const sortedM = (measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
-  const latestWeight = sortedM.find(m => m.weight)?.weight;
+  const latestWeight = getLatestMeasurementSnapshot(measurements).weight;
   const proteinTarget = latestWeight ? Math.round(parseDecimal(latestWeight) * 1.7) : 0;
   const fileRef = useRef();
 
@@ -2414,7 +2445,7 @@ const Field = ({ label: lbl, value, unit, onChange, type = 'text', placeholder =
       </span>
       {unit && <span style={{ color: 'rgba(255,255,255,0.4)' }}>{unit}</span>}
     </div>
-    <input type={type} inputMode={type === 'number' ? 'decimal' : 'text'} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
+    <input type={type} inputMode={type === 'number' ? 'decimal' : 'text'} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={type === 'date' ? compactDateInputStyle : inputStyle} />
   </div>
 );
 
@@ -2477,7 +2508,7 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
   const wk4 = []; for (let i = 0; i < 4; i++) { const d = new Date(); d.setDate(d.getDate() - i * 7); wk4.push(weekKey(d)); }
   const recent = (history.workouts || []).filter(w => wk4.includes(weekKey(new Date(w.date))));
   const checkIns = last7.map(d => dailyLogs[d]?.checkIn).filter(Boolean);
-  const latest = (measurements || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0] || {};
+  const latest = getLatestMeasurementSnapshot(measurements);
   const reportAge = calcAge(profile.birthDate);
   const proteinTarget = latest.weight ? Math.round(parseDecimal(latest.weight) * 1.7) : 0;
 
@@ -2589,8 +2620,8 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
 const ResetModal = ({ onConfirm, onCancel }) => {
   const [step, setStep] = useState(1);
   return (
-    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ backgroundColor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: 24, maxWidth: 360, width: '100%', color: '#fff' }}>
+    <div style={{ ...modalOverlayStyle, zIndex: 50 }}>
+      <div style={{ ...modalPanelStyle, border: '1px solid rgba(255,255,255,0.1)', maxWidth: 360, color: '#fff' }}>
         <AlertCircle size={40} color="#f87171" style={{ margin: '0 auto', display: 'block' }} />
         <h2 style={{ fontSize: FS.xl, fontWeight: 600, textAlign: 'center', marginTop: 12 }}>{step === 1 ? 'Reset di tutti i dati?' : 'Sei davvero sicuro?'}</h2>
         <p style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)', textAlign: 'center', marginTop: 8 }}>{step === 1 ? 'Tutti i dati saranno eliminati. Operazione non reversibile.' : 'Conferma definitiva.'}</p>
