@@ -129,8 +129,8 @@ const GLOSSARY = {
     body: 'Cardio a bassa intensità: 60-70% FC max (105-125 bpm per te).\n\nDevi poter parlare, ma con un po\' di fatica.\n\nCostruisce base aerobica e densità mitocondriale. Allena il cuore senza stress.'
   },
   Norwegian: {
-    title: 'Norwegian 4x4',
-    body: 'Protocollo HIIT evidence-based:\n• 4 intervalli da 4 minuti a 85-95% FC max\n• Separati da 3 minuti di recupero attivo a 60-70%\n\nIl miglior protocollo per aumentare VO2max. Studi norvegesi mostrano +10-15% VO2max in 8 settimane.'
+    title: 'Norwegian 5×4 (VO2max)',
+    body: 'Protocollo HIIT ad alta intensità ottimizzato per massimo guadagno VO2max. Basato sugli studi di Wisløff et al. (2007) e Helgerud et al. (2007) sul protocollo 4×4 norvegese, esteso a 5 round per massimizzare lo stimolo single-session quando la frequenza settimanale è bassa (1×/settimana). Struttura: 10 min warm-up @ 60-70% FCmax, 5 round di 4 min @ 85-95% FCmax intervallati da 3 min recovery attivo @ 60-70% FCmax, 5 min cool-down @ 50-60% FCmax. Il tempo cumulativo in zona 85-95% FCmax è il driver principale degli adattamenti VO2max: arrivare a quel range nei primi 60-90 secondi di ogni round è essenziale. Monitorare la FC con cardiofrequenzimetro e mantenere ogni round all\'intensità target è più importante della velocità o della potenza assoluta.'
   },
   Deload: {
     title: 'Deload — Settimana di scarico',
@@ -232,10 +232,10 @@ const TASKS = {
     tipForPT: 'Chiedi al PT: niente forza ripetitiva (la fai Lun/Ven autonomamente), focus su quello che da solo non faresti'
   },
   norwegian: {
-    id: 'norwegian', name: 'Norwegian 4x4', icon: '🔥', type: 'hiit',
+    id: 'norwegian', name: 'Norwegian 5×4 (VO2max)', icon: '🔥', type: 'hiit',
     suggestedDay: 4, color: '#ef4444',
     structure: [
-      { phase: 'Warm-up', duration: 720, target: 'Riscaldamento progressivo' },
+      { phase: 'Warm-up', duration: 600, target: '60-70% FC max', bpmRange: [60, 70] },
       { phase: 'Round 1 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
       { phase: 'Round 1 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
       { phase: 'Round 2 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
@@ -244,8 +244,9 @@ const TASKS = {
       { phase: 'Round 3 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
       { phase: 'Round 4 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
       { phase: 'Round 4 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
-      { phase: 'Cool-down', duration: 600, target: 'Defaticamento' },
-      { phase: 'Stretching', duration: 600, target: 'Allungamento' }
+      { phase: 'Round 5 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
+      { phase: 'Cool-down', duration: 300, target: '50-60% FC max', bpmRange: [50, 60] },
+      { phase: 'Stretching (opzionale)', duration: 600, target: 'Allungamento', optional: true }
     ]
   },
   lower: {
@@ -1154,6 +1155,19 @@ const AdjustmentAlertModal = ({ alert, onDismiss }) => {
   );
 };
 
+const ConfirmModal = ({ title, body, confirmLabel, cancelLabel, onConfirm, onCancel }) => (
+  <div onClick={onCancel} style={modalOverlayStyle}>
+    <div onClick={e => e.stopPropagation()} style={{ ...modalPanelStyle, maxWidth: 360 }}>
+      <h3 style={{ fontSize: FS.lg, fontWeight: 600, color: '#fff', marginBottom: 10 }}>{title}</h3>
+      <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.8)', lineHeight: 1.5, marginBottom: 18 }}>{body}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+        <button onClick={onCancel} style={{ ...btnSecondary, padding: 12 }}>{cancelLabel}</button>
+        <TouchablePress onClick={onConfirm} style={{ ...btnPrimary, padding: 12 }}>{confirmLabel}</TouchablePress>
+      </div>
+    </div>
+  </div>
+);
+
 // ============ MAIN ============
 function LongevityAppV4() {
   const [tab, setTab] = useState('home');
@@ -1890,6 +1904,7 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(task.structure[0].duration);
   const [running, setRunning] = useState(false);
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
   const [hrAvg, setHrAvg] = useState('');
   const [feeling, setFeeling] = useState(5);
   const tickRef = useRef(null);
@@ -1911,6 +1926,23 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
     const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, hrAvg, feeling, type: task.type };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     onExit();
+  };
+  const handleEndSession = async () => {
+    await saveSession();
+  };
+  const skipPhase = () => {
+    if (phaseIdx < task.structure.length - 1) {
+      const ni = phaseIdx + 1;
+      setPhaseIdx(ni);
+      setSecondsLeft(task.structure[ni].duration);
+    }
+  };
+  const handleSkipRequest = () => {
+    if (task.id === 'norwegian') {
+      setSkipConfirmOpen(true);
+    } else {
+      skipPhase();
+    }
   };
 
   const total = task.structure.reduce((a, p) => a + p.duration, 0);
@@ -1935,7 +1967,14 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
         </div>
 
         <div style={{ ...cardLarge, marginBottom: 24, textAlign: 'center', padding: 24, backgroundColor: currentPhase.intense ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)', borderColor: currentPhase.intense ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)' }}>
-          <div style={{ fontSize: FS.sm, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.55)' }}>{currentPhase.phase}</div>
+          <div style={{ fontSize: FS.sm, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.55)' }}>
+            {currentPhase.phase}
+            {currentPhase.optional && (
+              <span style={{ fontSize: 12, background: 'rgba(255,255,255,0.15)', padding: '2px 8px', borderRadius: 8, marginLeft: 8 }}>
+                Opzionale
+              </span>
+            )}
+          </div>
           <div style={{ fontFamily: FONT_MONO, fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
           <div style={{ fontSize: FS.base, color: 'rgba(255,255,255,0.82)', marginTop: 16, lineHeight: 1.4 }}>{currentPhase.target}</div>
           {task.id === 'norwegian' && currentPhase.bpmRange && (
@@ -1949,7 +1988,12 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
           <TouchablePress onClick={() => { haptic('light'); setRunning(r => !r); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
             {running ? <><Pause size={20} fill="currentColor" /> Pausa</> : <><Play size={20} fill="currentColor" /> Avvia</>}
           </TouchablePress>
-          <button onClick={() => { if (phaseIdx < task.structure.length - 1) { const ni = phaseIdx + 1; setPhaseIdx(ni); setSecondsLeft(task.structure[ni].duration); } }} style={{ ...btnSecondary, padding: 16 }}>Salta fase →</button>
+          <button onClick={handleSkipRequest} style={{ ...btnSecondary, padding: 16 }}>Salta fase →</button>
+          {currentPhase.optional && (
+            <TouchablePress onClick={handleEndSession} style={{ ...btnPrimary, gridColumn: '1 / -1' }}>
+              Termina sessione qui ✓
+            </TouchablePress>
+          )}
         </div>
 
         <div style={{ ...cardLarge, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1966,6 +2010,16 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
 
         <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ ...btnPrimary, marginTop: 16 }}>Chiudi sessione ✓</TouchablePress>
       </div>
+      {skipConfirmOpen && (
+        <ConfirmModal
+          title="Saltare questa fase?"
+          body="Saltare un round riduce lo stimolo VO2max del protocollo 5×4 evidence-based. Confermi?"
+          confirmLabel="Sì, salta"
+          cancelLabel="Annulla"
+          onConfirm={() => { skipPhase(); setSkipConfirmOpen(false); }}
+          onCancel={() => setSkipConfirmOpen(false)}
+        />
+      )}
     </div>
   );
 };
