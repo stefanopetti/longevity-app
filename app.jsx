@@ -847,14 +847,17 @@ const calcExpectedNow = (baselineValue, baselineDate, targetValue, monthsTotal) 
   return baselineValue + (targetValue - baselineValue) * progress;
 };
 
-const paceText = (current, expectedNow, better) => {
-  if (!current || !expectedNow) return '';
+const paceLabel = (current, expectedNow, better) => {
+  if (current === null || current === undefined || expectedNow === null || expectedNow === undefined) {
+    return { icon: '', text: '', color: 'rgba(255,255,255,0.5)', status: 'unknown', pct: null };
+  }
   const delta = current - expectedNow;
-  const directionalDelta = better === 'up' ? delta : -delta;
-  const pct = (Math.abs(directionalDelta) / expectedNow * 100).toFixed(1);
-  if (Math.abs(directionalDelta) / expectedNow < 0.03) return 'In traiettoria';
-  if (directionalDelta > 0) return `Avanti sul pace +${pct}%`;
-  return `Indietro sul pace -${pct}%`;
+  const directionalDelta = better === 'up' ? delta : (better === 'down' ? -delta : Math.abs(delta));
+  const pct = Math.abs(directionalDelta) / Math.abs(expectedNow) * 100;
+  const pctStr = pct.toFixed(1);
+  if (pct < 1) return { icon: '🟢', text: `In traiettoria ±${pctStr}%`, color: '#10b981', status: 'on-track', pct };
+  if (directionalDelta > 0) return { icon: '🟢', text: `Avanti sul pace +${pctStr}%`, color: '#10b981', status: 'ahead', pct };
+  return { icon: '🟡', text: `Indietro sul pace -${pctStr}%`, color: '#f59e0b', status: 'behind', pct };
 };
 
 const calcGoals = (profile, measurements) => {
@@ -871,14 +874,7 @@ const calcGoals = (profile, measurements) => {
     const t = customTarget || targets[key];
     if (!t) return null;
     const expectedNow = baseline && t.t6 ? calcExpectedNow(baseline.value, baseline.date, t.t6, 6) : null;
-    let pace = null;
-    if (current && expectedNow !== null) {
-      const delta = better === 'up' ? current - expectedNow : expectedNow - current;
-      const pct = Math.abs(delta / expectedNow * 100);
-      if (pct < 3) pace = 'on-track';
-      else if (delta > 0) pace = 'ahead';
-      else pace = 'behind';
-    }
+    const pace = paceLabel(current || null, expectedNow, better);
 
     return {
       id: key,
@@ -894,7 +890,8 @@ const calcGoals = (profile, measurements) => {
       glossKey,
       isCustom: !!customTarget,
       expectedNow,
-      pace
+      pace: pace.status === 'unknown' ? null : pace,
+      pacePct: pace.pct
     };
   };
 
@@ -2034,16 +2031,29 @@ const METRIC_OPTIMAL = {
   hrRest: { min: 50, max: 70, note: 'Atleti 50-60, sedentari 70-80, allenato 50-65 bpm' },
   hrv: { min: 30, max: 100, note: 'Trend mensile > valore assoluto. Cala 5-10% con stress' },
   bodyFat: { min: 12, max: 18, note: 'Uomo 50+: 11-22% normale, 12-18% atletico' },
-  bpSys: { min: 110, max: 120, note: '<120 ottimale, 120-129 elevata, ≥130 ipertensione' },
-  bpDia: { min: 70, max: 80, note: '<80 ottimale, 80-89 elevata, ≥90 ipertensione' }
+  bpSys: { min: 90, max: 120, note: '<120 ottimale, 120-129 elevata, ≥130 ipertensione (<90 ipotensione clinica)' },
+  bpDia: { min: 60, max: 80, note: '<80 ottimale, 80-89 elevata, ≥90 ipertensione (<60 ipotensione clinica)' }
 };
 
-const evalAbsolute = (key, value) => {
+const evalAbsolute = (key, value, better = 'maintain') => {
   const optimal = METRIC_OPTIMAL[key];
   if (!optimal) return null;
   const v = parseDecimal(value);
   if (!v) return null;
   const buffer = (optimal.max - optimal.min) * 0.15;
+
+  if (better === 'down') {
+    if (v <= optimal.max) return { status: 'ok', color: '#10b981', icon: '🟢', label: 'In range ottimale' };
+    if (v <= optimal.max + buffer) return { status: 'warn', color: '#f59e0b', icon: '🟡', label: 'Borderline' };
+    return { status: 'out', color: '#ef4444', icon: '🔴', label: 'Fuori range' };
+  }
+
+  if (better === 'up') {
+    if (v >= optimal.min) return { status: 'ok', color: '#10b981', icon: '🟢', label: 'In range ottimale' };
+    if (v >= optimal.min - buffer) return { status: 'warn', color: '#f59e0b', icon: '🟡', label: 'Borderline' };
+    return { status: 'out', color: '#ef4444', icon: '🔴', label: 'Fuori range' };
+  }
+
   if (v >= optimal.min && v <= optimal.max) return { status: 'ok', color: '#10b981', icon: '🟢', label: 'In range ottimale' };
   if (v >= optimal.min - buffer && v <= optimal.max + buffer) return { status: 'warn', color: '#f59e0b', icon: '🟡', label: 'Borderline' };
   return { status: 'out', color: '#ef4444', icon: '🔴', label: 'Fuori range' };
@@ -2078,18 +2088,30 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const chartH = height - pad.top - pad.bottom;
   const values = clean.map(p => p.value);
   const optimal = metric.optimalRange;
-  const minData = values.length ? Math.min(...values) : 0;
-  const maxData = values.length ? Math.max(...values) : 1;
-  const min = Math.min(minData, optimal?.min ?? minData);
-  const max = Math.max(maxData, optimal?.max ?? maxData);
+  const goalValues = [goal?.baseline, goal?.t6].map(parseDecimal).filter(Boolean);
+  const minData = values.length ? Math.min(...values) : (goalValues.length ? Math.min(...goalValues) : 0);
+  const maxData = values.length ? Math.max(...values) : (goalValues.length ? Math.max(...goalValues) : 1);
+  const min = Math.min(minData, optimal?.min ?? minData, ...(goalValues.length ? goalValues : [minData]));
+  const max = Math.max(maxData, optimal?.max ?? maxData, ...(goalValues.length ? goalValues : [maxData]));
   const range = max - min || 1;
-  const xFor = (i) => clean.length < 2 ? pad.left + chartW / 2 : pad.left + (i / (clean.length - 1)) * chartW;
+  const expectedEndDate = goal?.baselineDate ? new Date(goal.baselineDate) : null;
+  if (expectedEndDate) expectedEndDate.setMonth(expectedEndDate.getMonth() + 6);
+  const dateValues = clean.map(p => new Date(p.date).getTime()).filter(Number.isFinite);
+  if (goal?.baselineDate) dateValues.push(new Date(goal.baselineDate).getTime());
+  if (expectedEndDate) dateValues.push(expectedEndDate.getTime());
+  const minDate = dateValues.length ? Math.min(...dateValues) : 0;
+  const maxDate = dateValues.length ? Math.max(...dateValues) : 1;
+  const dateRange = maxDate - minDate || 1;
+  const xForDate = (date) => dateValues.length < 2 || maxDate === minDate
+    ? pad.left + chartW / 2
+    : pad.left + ((new Date(date).getTime() - minDate) / dateRange) * chartW;
   const yFor = (v) => pad.top + chartH - ((v - min) / range) * chartH;
-  const dataPath = clean.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(p.value).toFixed(1)}`).join(' ');
+  const dataPath = clean.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xForDate(p.date).toFixed(1)} ${yFor(p.value).toFixed(1)}`).join(' ');
   const trend = clean.length >= 3 ? calcTrendLine(clean) : null;
-  const trendPath = trend ? `M ${xFor(0).toFixed(1)} ${yFor(trend.intercept).toFixed(1)} L ${xFor(clean.length - 1).toFixed(1)} ${yFor(trend.intercept + trend.slope * (clean.length - 1)).toFixed(1)}` : '';
+  const trendPath = trend ? `M ${xForDate(clean[0].date).toFixed(1)} ${yFor(trend.intercept).toFixed(1)} L ${xForDate(clean[clean.length - 1].date).toFixed(1)} ${yFor(trend.intercept + trend.slope * (clean.length - 1)).toFixed(1)}` : '';
   const optimalY1 = optimal ? yFor(optimal.max) : 0;
   const optimalY2 = optimal ? yFor(optimal.min) : 0;
+  const goalPace = goal ? paceLabel(goal.current, goal.expectedNow, goal.better) : null;
   const first = clean[0];
   const last = clean[clean.length - 1];
   const delta = first && last ? ((last.value - first.value) / first.value) * 100 : 0;
@@ -2114,13 +2136,28 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
           {optimal && <rect x={pad.left} y={Math.min(optimalY1, optimalY2)} width={chartW} height={Math.abs(optimalY2 - optimalY1)} fill={COLORS.success} opacity="0.15" />}
           <text x={pad.left - 8} y={pad.top + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,0.45)">{fmtNumber(max)}</text>
           <text x={pad.left - 8} y={pad.top + chartH} textAnchor="end" fontSize="10" fill="rgba(255,255,255,0.45)">{fmtNumber(min)}</text>
+          {goal?.t6 != null && (
+            <>
+              <line x1={pad.left} y1={yFor(goal.t6)} x2={pad.left + chartW} y2={yFor(goal.t6)} stroke="#10b981" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.7" />
+              <text x={pad.left + chartW} y={yFor(goal.t6) - 6} fill="#10b981" fontSize="10" textAnchor="end">Target T+6m: {fmtNumber(goal.t6)}</text>
+            </>
+          )}
+          {goal?.baseline != null && (
+            <>
+              <line x1={pad.left} y1={yFor(goal.baseline)} x2={pad.left + chartW} y2={yFor(goal.baseline)} stroke="rgba(255,255,255,0.3)" strokeWidth="1" strokeDasharray="3 3" />
+              <text x={pad.left + 4} y={yFor(goal.baseline) - 4} fill="rgba(255,255,255,0.5)" fontSize="9">Baseline: {fmtNumber(goal.baseline)}</text>
+            </>
+          )}
+          {goal?.baseline != null && goal?.t6 != null && goal?.baselineDate && expectedEndDate && (
+            <line x1={xForDate(goal.baselineDate)} y1={yFor(goal.baseline)} x2={xForDate(expectedEndDate)} y2={yFor(goal.t6)} stroke="#10b981" strokeWidth="1" strokeDasharray="2 4" opacity="0.5" />
+          )}
           {clean.length >= 2 && <path d={dataPath} fill="none" stroke={metric.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />}
-          {clean.length === 1 && <circle cx={xFor(0)} cy={yFor(clean[0].value)} r="4" fill={metric.color} />}
+          {clean.length === 1 && <circle cx={xForDate(clean[0].date)} cy={yFor(clean[0].value)} r="4" fill={metric.color} />}
           {clean.map((p, i) => (
             <React.Fragment key={`${p.date}-${i}`}>
-              <circle cx={xFor(i)} cy={yFor(p.value)} r="3.5" fill="#151515" stroke={metric.color} strokeWidth="2" />
+              <circle cx={xForDate(p.date)} cy={yFor(p.value)} r="3.5" fill="#151515" stroke={metric.color} strokeWidth="2" />
               {(i % labelEvery === 0 || i === clean.length - 1) && (
-                <text x={xFor(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="rgba(255,255,255,0.4)">
+                <text x={xForDate(p.date)} y={height - 8} textAnchor="middle" fontSize="9" fill="rgba(255,255,255,0.4)">
                   {new Date(p.date).toLocaleDateString('it-IT', { month: 'short', year: '2-digit' })}
                 </text>
               )}
@@ -2149,8 +2186,8 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
           <div style={{ marginTop: 14, padding: 12, borderRadius: 10, backgroundColor: 'rgba(132,204,22,0.08)', border: '1px solid rgba(132,204,22,0.2)' }}>
             <div style={{ ...labelTiny, marginBottom: 7 }}>Obiettivo</div>
             <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.9)' }}>Target T+6m: {goal.t6 != null ? fmtNumber(goal.t6) : '—'} {goal.unit}</div>
-            {paceText(goal.current, goal.expectedNow, goal.better) && (
-              <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.68)', marginTop: 5 }}>Pace: {paceText(goal.current, goal.expectedNow, goal.better)}</div>
+            {goalPace?.text && (
+              <div style={{ fontSize: FS.xs, color: goalPace.color, fontWeight: 600, marginTop: 5 }}>Pace attuale: {goalPace.icon} {goalPace.text}</div>
             )}
             <button onClick={() => { onClose(); setTab('goals'); }} style={{ ...btnSecondary, width: '100%', marginTop: 10 }}>Vai a obiettivi</button>
           </div>
@@ -2255,8 +2292,7 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom, onViewHistory })
   const nearestTarget = [3, 6, 12].reduce((closest, month) => (
     Math.abs(monthsElapsed - month) < Math.abs(monthsElapsed - closest) ? month : closest
   ), 3);
-  const paceLabel = paceText(goal.current, goal.expectedNow, goal.better);
-  const paceColor = goal.pace === 'behind' ? COLORS.recovery : COLORS.success;
+  const pace = paceLabel(goal.current, goal.expectedNow, goal.better);
 
   const startEditing = () => {
     setEditT3(goal.t3 != null ? String(goal.t3) : '');
@@ -2282,9 +2318,9 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom, onViewHistory })
             <span style={{ fontSize: FS['2xl'], fontWeight: 600 }}>{goal.current != null ? fmtNumber(goal.current) : '—'}</span>
             <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{goal.unit}</span>
           </div>
-          {goal.pace && paceLabel && (
-            <div style={{ fontSize: FS.xs, color: paceColor, fontWeight: 600, marginTop: 5 }}>
-              {goal.pace === 'behind' ? '🟡' : '🟢'} {paceLabel}
+          {pace.text && (
+            <div style={{ fontSize: FS.xs, color: pace.color, fontWeight: 600, marginTop: 5 }}>
+              {pace.icon} {pace.text}
             </div>
           )}
         </div>
@@ -2442,7 +2478,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss, profile
         const trend = calcTrend(f.key, f.better);
         const Icon = !trend || Math.abs(trend.delta) < 2 ? Minus : (trend.delta > 0 ? TrendingUp : TrendingDown);
         const trendColor = !trend ? 'rgba(255,255,255,0.45)' : trend.positive ? '#84cc16' : '#f87171';
-        const absolute = evalAbsolute(f.key, latest);
+        const absolute = evalAbsolute(f.key, latest, f.better);
         return (
           <TouchablePress key={f.key} onClick={() => { haptic('light'); setChartModal(f); }} style={{ ...card, width: '100%', textAlign: 'left', color: '#fff', borderColor: `${f.color}44`, minHeight: 44 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -2779,12 +2815,11 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
 
   r += `\n## Obiettivi\n`;
   goals.forEach(g => {
-    const pace = paceText(g.current, g.expectedNow, g.better);
-    const paceIcon = g.pace === 'behind' ? '🟡' : '🟢';
+    const pace = paceLabel(g.current, g.expectedNow, g.better);
     r += `\n### ${g.label}${g.baselineDate ? ` (locked da ${g.baselineDate})` : ''}\n`;
     r += `${g.current != null ? fmtNumber(g.current) : '—'} ${g.unit} (target T+6m: ${g.t6 != null ? fmtNumber(g.t6) : '—'})\n\n`;
     r += `Baseline: ${g.baseline != null ? fmtNumber(g.baseline) : '—'}${g.baselineDate ? ` (da ${g.baselineDate})` : ''} · oggi: ${g.current != null ? fmtNumber(g.current) : '—'} · pace expected: ${g.expectedNow != null ? fmtNumber(g.expectedNow) : '—'}\n`;
-    if (pace) r += `${paceIcon} ${pace}\n`;
+    if (pace.text) r += `${pace.icon} ${pace.text}\n`;
   });
 
   r += `\n## Aderenza ultime 4 settimane\n- Sessioni totali: ${recent.length}/20 (${Math.round((recent.length / 20) * 100)}%)\n`;
