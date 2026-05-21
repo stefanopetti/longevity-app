@@ -144,6 +144,10 @@ const GLOSSARY = {
     title: 'Recovery-aware',
     body: 'Se il check-in mattutino mostra energia<5 o soreness>7, il suggerimento mantiene lo stesso peso ma propone +1 rep invece di aumentare il carico, per evitare progressioni in stato di recupero insufficiente.'
   },
+  'qualità sonno': {
+    title: 'Qualità del sonno',
+    body: 'Oltre alle ore, conta molto come hai dormito: continuità, profondità, sensazione al risveglio. L\'evidenza scientifica mostra che l\'architettura del sonno (fasi REM e profondo) ha impatto maggiore della sola durata. Per questo l\'Indice Salute pesa la qualità al 70% e le ore al 30% nel driver sonno.'
+  },
   'suggerimento giorno': {
     title: 'Suggerimento del giorno',
     body: 'L\'app analizza ogni giorno il tuo recovery (energia/soreness), il bilanciamento dei carichi degli ultimi giorni e le sessioni saltate nella settimana, e ti suggerisce la task più adatta. La programmazione settimanale fissa (Upper Lun, Zone2 Mar, ecc.) resta il riferimento di base — il suggerimento la integra solo quando serve.'
@@ -483,6 +487,23 @@ const migrateProfile = (old) => {
   return p;
 };
 
+const migrateDailyLogs = (logs) => {
+  if (!logs || logs._migrated_sleepQuality) return logs;
+  const migrated = { ...logs };
+  Object.keys(migrated).forEach(dateKey => {
+    if (dateKey.startsWith('_')) return;
+    const day = migrated[dateKey];
+    if (day?.checkIn && day.checkIn.sleepQuality === undefined) {
+      migrated[dateKey] = {
+        ...day,
+        checkIn: { ...day.checkIn, sleepQuality: 7 }
+      };
+    }
+  });
+  migrated._migrated_sleepQuality = true;
+  return migrated;
+};
+
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
 
@@ -732,10 +753,22 @@ const calcHealthScore = (history, measurements, dailyLogs) => {
   components.push({ key: 'aderenza', value: Math.min(100, (completed / 20) * 100), weight: 35 });
 
   const last7 = Array.from({ length: 7 }, (_, i) => daysAgo(i));
-  const sleepLogs = last7.map(d => dailyLogs[d]?.sleep || 0).filter(v => v > 0);
-  if (sleepLogs.length >= 3) {
-    const avg = sleepLogs.reduce((a, b) => a + b, 0) / sleepLogs.length;
-    components.push({ key: 'sonno', value: Math.max(0, Math.min(100, ((avg - 5.5) / 2) * 100)), weight: 25 });
+  const sleepData = last7
+    .map(d => ({
+      hours: dailyLogs[d]?.sleep || 0,
+      quality: dailyLogs[d]?.checkIn?.sleepQuality
+    }))
+    .filter(s => s.hours > 0);
+  if (sleepData.length >= 3) {
+    const avgHours = sleepData.reduce((a, b) => a + b.hours, 0) / sleepData.length;
+    const hoursScore = Math.max(0, Math.min(100, ((avgHours - 5.5) / 2) * 100));
+    const qualityValues = sleepData.map(s => s.quality).filter(q => q !== undefined && q !== null);
+    const avgQuality = qualityValues.length > 0
+      ? qualityValues.reduce((a, b) => a + b, 0) / qualityValues.length
+      : 7;
+    const qualityScore = ((avgQuality - 1) / 9) * 100;
+    const sleepDriverScore = hoursScore * 0.3 + qualityScore * 0.7;
+    components.push({ key: 'sonno', value: sleepDriverScore, weight: 25 });
   }
 
   const hrvMeasures = (measurements || []).filter(m => m.hrv).sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -1107,6 +1140,8 @@ function LongevityAppV4() {
       const h = await storage.get('history', { workouts: [] });
       const m = await storage.get('measurements', []);
       const d = await storage.get('dailyLogs', {});
+      const dMigrated = migrateDailyLogs(d);
+      if (dMigrated !== d) await storage.set('dailyLogs', dMigrated);
       const da = await storage.get('dismissedAlerts', []);
       const lockedProfile = lockGoalIfNeeded(p, m, async (np) => {
         await storage.set('profile', np);
@@ -1114,11 +1149,11 @@ function LongevityAppV4() {
       const lastSnapshotDate = await storage.get('autoSnapshotDate', '');
       const todayStr = todayKey();
       if (lastSnapshotDate !== todayStr) {
-        const dailySnapshot = { profile: lockedProfile, history: h, measurements: m, dailyLogs: d, snapshotAt: new Date().toISOString() };
+        const dailySnapshot = { profile: lockedProfile, history: h, measurements: m, dailyLogs: dMigrated, snapshotAt: new Date().toISOString() };
         await storage.set('snapshot_yesterday', dailySnapshot);
         await storage.set('autoSnapshotDate', todayStr);
       }
-      setProfile(lockedProfile); setHistory(h); setMeasurements(m); setDailyLogs(d); setDismissedAlerts(da); setLoaded(true);
+      setProfile(lockedProfile); setHistory(h); setMeasurements(m); setDailyLogs(dMigrated); setDismissedAlerts(da); setLoaded(true);
     })();
   }, []);
 
@@ -1217,7 +1252,12 @@ function LongevityAppV4() {
       <GlossaryModal termKey={glossOpen} onClose={() => setGlossOpen(null)} />
     </>
   );
-  if (showCheckIn) return <CheckInScreen dailyLogs={dailyLogs} saveDaily={saveDaily} onExit={() => setShowCheckIn(false)} />;
+  if (showCheckIn) return (
+    <>
+      <CheckInScreen dailyLogs={dailyLogs} saveDaily={saveDaily} onExit={() => setShowCheckIn(false)} onGloss={setGlossOpen} />
+      <GlossaryModal termKey={glossOpen} onClose={() => setGlossOpen(null)} />
+    </>
+  );
   if (showReport) return <ReportScreen profile={profile} history={history} measurements={measurements} dailyLogs={dailyLogs} goals={goals} health={health} streak={streak} prs={prs} onExit={() => setShowReport(false)} />;
 
   return (
@@ -2019,14 +2059,16 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
 };
 
 // ============ CHECK-IN ============
-const CheckInScreen = ({ dailyLogs, saveDaily, onExit }) => {
+const CheckInScreen = ({ dailyLogs, saveDaily, onExit, onGloss }) => {
+  const todayLog = dailyLogs[todayKey()]?.checkIn;
   const [sleep, setSleep] = useState(7.5);
+  const [sleepQuality, setSleepQuality] = useState(todayLog?.sleepQuality ?? 7);
   const [energy, setEnergy] = useState(7);
   const [soreness, setSoreness] = useState(3);
 
   const save = async () => {
     const k = todayKey();
-    const newLogs = { ...dailyLogs, [k]: { ...(dailyLogs[k] || {}), sleep, checkIn: { sleep, energy, soreness, ts: Date.now() } } };
+    const newLogs = { ...dailyLogs, [k]: { ...(dailyLogs[k] || {}), sleep, checkIn: { sleep, sleepQuality, energy, soreness, ts: Date.now() } } };
     await saveDaily(newLogs); onExit();
   };
 
@@ -2042,9 +2084,15 @@ const CheckInScreen = ({ dailyLogs, saveDaily, onExit }) => {
       <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
         <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, marginBottom: 16, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
         <h1 style={{ fontSize: FS['3xl'], fontWeight: 300, marginBottom: 4 }}>Check-in</h1>
-        <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 24 }}>15 secondi · 3 slider</div>
+        <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 24 }}>15 secondi · 4 slider</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <SliderField label="Ore di sonno" value={sleep} setValue={setSleep} min={3} max={12} step={0.5} suffix="h" />
+          <div>
+            <SliderField label="Qualità sonno" value={sleepQuality} setValue={setSleepQuality} min={1} max={10} step={1} glossKey="qualità sonno" onGloss={onGloss} />
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: -4, marginBottom: 12, textAlign: 'right' }}>
+              {sleepQuality <= 3 ? 'Pessimo (frammentato, risvegli)' : sleepQuality <= 6 ? 'Mediocre' : sleepQuality <= 8 ? 'Buono' : 'Eccellente (riposato, energico)'}
+            </div>
+          </div>
           <SliderField label="Energia mattutina" value={energy} setValue={setEnergy} min={1} max={10} suffix="/10" />
           <SliderField label="Soreness muscolare" value={soreness} setValue={setSoreness} min={1} max={10} suffix="/10" reverse />
           <div style={{ ...card, color: suggestion().color, marginTop: 8 }}>
@@ -2058,10 +2106,13 @@ const CheckInScreen = ({ dailyLogs, saveDaily, onExit }) => {
   );
 };
 
-const SliderField = ({ label: lbl, value, setValue, min, max, step = 1, suffix = '', reverse = false }) => (
+const SliderField = ({ label: lbl, value, setValue, min, max, step = 1, suffix = '', reverse = false, glossKey, onGloss }) => (
   <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.sm, marginBottom: 8 }}>
-      <span style={{ color: 'rgba(255,255,255,0.7)' }}>{lbl}</span>
+      <span style={{ color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: 2 }}>
+        {lbl}
+        {glossKey && <InfoButton glossKey={glossKey} onClick={onGloss} />}
+      </span>
       <span style={{ color: '#fff', fontWeight: 600, fontSize: FS.lg, fontFamily: FONT_MONO }}>{value}{suffix}</span>
     </div>
     <input type="range" min={min} max={max} step={step} value={value} onChange={e => setValue(parseFloat(e.target.value))} style={{ width: '100%', accentColor: reverse ? '#f87171' : '#84cc16', height: 44 }} />
