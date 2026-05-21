@@ -43,6 +43,8 @@ const DEFAULT_PROFILE = {
   hrMax: '',
   supplements: [],
   customGoalTargets: {},
+  goalBaselines: {},
+  goalTargets: {},
   lastBackupReminder: '',
   cholTotal: '', ldl: '', hdl: '', trigl: '', apoB: '', lpa: '', homocysteine: '', glucose: '', hba1c: '', vitDBlood: '',
   hsCRP: '', insulin: '', homa: '', testTot: '', testFree: '', shbg: '', tsh: '', ft3: '', ferritin: '', egfr: '',
@@ -455,6 +457,8 @@ const migrateProfile = (old) => {
     delete p[key];
   });
   if (!p.customGoalTargets) p.customGoalTargets = {};
+  if (!p.goalBaselines) p.goalBaselines = {};
+  if (!p.goalTargets) p.goalTargets = {};
   p._migrated_v8 = true;
   return p;
 };
@@ -762,32 +766,145 @@ const getPRTrend = (history, lift) => {
 };
 
 // ============ GOALS ============
-const calcGoals = (profile, measurements) => {
-  const goals = [];
-  const sorted = (measurements || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
-  const latest = getLatestMeasurementSnapshot(measurements);
-  const baseline = sorted[0] || {};
+const GOAL_CUSTOM_ALIASES = {
+  vo2max: 'vo2',
+  muscleMassKg: 'mm',
+  bodyFat: 'bf',
+  hrRest: 'hrR'
+};
 
-  const vo2 = parseDecimal(latest.vo2max);
-  if (vo2) goals.push({ id: 'vo2', label: 'VO2max', current: vo2, t3: +(vo2 * 1.05).toFixed(1), t6: +(vo2 * 1.11).toFixed(1), t12: +(vo2 * 1.165).toFixed(1), unit: 'ml/kg/min', better: 'up', baseline: baseline.vo2max, glossKey: 'VO2max' });
-  const mm = parseDecimal(latest.muscleMassKg);
-  if (mm) goals.push({ id: 'mm', label: 'Massa muscolare', current: mm, t3: null, t6: +(mm + 1.5).toFixed(1), t12: +(mm + 2.75).toFixed(1), unit: 'kg', better: 'up', baseline: baseline.muscleMassKg });
-  const bf = parseDecimal(latest.bodyFat);
-  if (bf) {
-    if (bf > 20) goals.push({ id: 'bf', label: '% Grasso corporeo', current: bf, t3: +(bf - 1.5).toFixed(1), t6: +(bf - 3).toFixed(1), t12: Math.max(15, +(bf - 5).toFixed(1)), unit: '%', better: 'down' });
-    else goals.push({ id: 'bf', label: '% Grasso (mantenimento)', current: bf, t3: bf, t6: bf, t12: bf, unit: '%', better: 'maintain' });
-  }
-  const hrR = parseDecimal(latest.hrRest);
-  if (hrR) goals.push({ id: 'hrR', label: 'FC riposo', current: hrR, t3: null, t6: hrR - 3, t12: hrR - 5, unit: 'bpm', better: 'down' });
-  const hrv = parseDecimal(latest.hrv);
-  if (hrv) goals.push({ id: 'hrv', label: 'HRV', current: hrv, t3: +(hrv * 1.05).toFixed(0), t6: +(hrv * 1.10).toFixed(0), t12: +(hrv * 1.12).toFixed(0), unit: 'ms', better: 'up', glossKey: 'HRV' });
+const lockGoalIfNeeded = (profile, measurements, saveProfile) => {
+  const sortedM = (measurements || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (sortedM.length === 0) return profile;
+  const baselines = { ...(profile.goalBaselines || {}) };
+  const targets = { ...(profile.goalTargets || {}) };
+  let changed = false;
+  const metricsToLock = ['vo2max', 'muscleMassKg', 'bodyFat', 'hrRest', 'hrv', 'weight'];
 
-  const customTargets = profile?.customGoalTargets || {};
-  return goals.map(g => {
-    const c = customTargets[g.id];
-    if (c) return { ...g, t3: c.t3 ?? g.t3, t6: c.t6 ?? g.t6, t12: c.t12 ?? g.t12, isCustom: true };
-    return g;
+  metricsToLock.forEach(key => {
+    if (baselines[key]) return;
+    const firstWithKey = sortedM.find(m => m[key] !== undefined && m[key] !== '' && m[key] !== null);
+    if (!firstWithKey) return;
+    const baseValue = parseDecimal(firstWithKey[key]);
+    if (!baseValue) return;
+
+    baselines[key] = { value: baseValue, date: firstWithKey.date };
+    if (!targets[key] && key === 'vo2max') {
+      targets[key] = {
+        t3: +(baseValue * 1.05).toFixed(1),
+        t6: +(baseValue * 1.11).toFixed(1),
+        t12: +(baseValue * 1.165).toFixed(1),
+        baselineDate: firstWithKey.date
+      };
+    } else if (!targets[key] && key === 'muscleMassKg') {
+      targets[key] = {
+        t3: null,
+        t6: +(baseValue + 1.5).toFixed(1),
+        t12: +(baseValue + 2.75).toFixed(1),
+        baselineDate: firstWithKey.date
+      };
+    } else if (!targets[key] && key === 'bodyFat') {
+      targets[key] = baseValue > 20 ? {
+        t3: +(baseValue - 1.5).toFixed(1),
+        t6: +(baseValue - 3).toFixed(1),
+        t12: Math.max(15, +(baseValue - 5).toFixed(1)),
+        baselineDate: firstWithKey.date
+      } : { t3: baseValue, t6: baseValue, t12: baseValue, baselineDate: firstWithKey.date };
+    } else if (!targets[key] && key === 'hrRest') {
+      targets[key] = {
+        t3: null,
+        t6: baseValue - 3,
+        t12: baseValue - 5,
+        baselineDate: firstWithKey.date
+      };
+    } else if (!targets[key] && key === 'hrv') {
+      targets[key] = {
+        t3: +(baseValue * 1.05).toFixed(0),
+        t6: +(baseValue * 1.10).toFixed(0),
+        t12: +(baseValue * 1.12).toFixed(0),
+        baselineDate: firstWithKey.date
+      };
+    }
+    changed = true;
   });
+
+  if (changed) {
+    const newProfile = { ...profile, goalBaselines: baselines, goalTargets: targets };
+    saveProfile(newProfile);
+    return newProfile;
+  }
+  return profile;
+};
+
+const calcExpectedNow = (baselineValue, baselineDate, targetValue, monthsTotal) => {
+  if (!baselineValue || !targetValue || !baselineDate) return null;
+  const now = new Date();
+  const base = new Date(baselineDate);
+  const monthsElapsed = (now - base) / (1000 * 60 * 60 * 24 * 30.44);
+  if (monthsElapsed < 0) return baselineValue;
+  if (monthsElapsed >= monthsTotal) return targetValue;
+  const progress = monthsElapsed / monthsTotal;
+  return baselineValue + (targetValue - baselineValue) * progress;
+};
+
+const paceText = (current, expectedNow, better) => {
+  if (!current || !expectedNow) return '';
+  const delta = current - expectedNow;
+  const directionalDelta = better === 'up' ? delta : -delta;
+  const pct = (Math.abs(directionalDelta) / expectedNow * 100).toFixed(1);
+  if (Math.abs(directionalDelta) / expectedNow < 0.03) return 'In traiettoria';
+  if (directionalDelta > 0) return `Avanti sul pace +${pct}%`;
+  return `Indietro sul pace -${pct}%`;
+};
+
+const calcGoals = (profile, measurements) => {
+  const latest = getLatestMeasurementSnapshot(measurements);
+  const baselines = profile?.goalBaselines || {};
+  const targets = profile?.goalTargets || {};
+  const customTargets = profile?.customGoalTargets || {};
+
+  const buildGoal = (key, label, unit, better, glossKey) => {
+    const current = parseDecimal(latest[key]);
+    if (!current && !baselines[key]) return null;
+    const baseline = baselines[key];
+    const customTarget = customTargets[key] || customTargets[GOAL_CUSTOM_ALIASES[key]];
+    const t = customTarget || targets[key];
+    if (!t) return null;
+    const expectedNow = baseline && t.t6 ? calcExpectedNow(baseline.value, baseline.date, t.t6, 6) : null;
+    let pace = null;
+    if (current && expectedNow !== null) {
+      const delta = better === 'up' ? current - expectedNow : expectedNow - current;
+      const pct = Math.abs(delta / expectedNow * 100);
+      if (pct < 3) pace = 'on-track';
+      else if (delta > 0) pace = 'ahead';
+      else pace = 'behind';
+    }
+
+    return {
+      id: key,
+      label,
+      current,
+      baseline: baseline?.value,
+      baselineDate: baseline?.date,
+      t3: t.t3,
+      t6: t.t6,
+      t12: t.t12,
+      unit,
+      better,
+      glossKey,
+      isCustom: !!customTarget,
+      expectedNow,
+      pace
+    };
+  };
+
+  return [
+    buildGoal('vo2max', 'VO2max', 'ml/kg/min', 'up', 'VO2max'),
+    buildGoal('muscleMassKg', 'Massa muscolare', 'kg', 'up', null),
+    buildGoal('bodyFat', '% Grasso corporeo', '%', 'down', null),
+    buildGoal('hrRest', 'FC riposo', 'bpm', 'down', null),
+    buildGoal('hrv', 'HRV', 'ms', 'up', 'HRV')
+  ].filter(Boolean);
 };
 
 // ============ STYLES ============
@@ -924,14 +1041,17 @@ function LongevityAppV4() {
       const m = await storage.get('measurements', []);
       const d = await storage.get('dailyLogs', {});
       const da = await storage.get('dismissedAlerts', []);
+      const lockedProfile = lockGoalIfNeeded(p, m, async (np) => {
+        await storage.set('profile', np);
+      });
       const lastSnapshotDate = await storage.get('autoSnapshotDate', '');
       const todayStr = todayKey();
       if (lastSnapshotDate !== todayStr) {
-        const dailySnapshot = { profile: p, history: h, measurements: m, dailyLogs: d, snapshotAt: new Date().toISOString() };
+        const dailySnapshot = { profile: lockedProfile, history: h, measurements: m, dailyLogs: d, snapshotAt: new Date().toISOString() };
         await storage.set('snapshot_yesterday', dailySnapshot);
         await storage.set('autoSnapshotDate', todayStr);
       }
-      setProfile(p); setHistory(h); setMeasurements(m); setDailyLogs(d); setDismissedAlerts(da); setLoaded(true);
+      setProfile(lockedProfile); setHistory(h); setMeasurements(m); setDailyLogs(d); setDismissedAlerts(da); setLoaded(true);
     })();
   }, []);
 
@@ -967,7 +1087,15 @@ function LongevityAppV4() {
 
   const saveProfile = async (p) => { setProfile(p); await storage.set('profile', p); };
   const saveHistory = async (h) => { setHistory(h); await storage.set('history', h); };
-  const saveMeasurements = async (m) => { setMeasurements(m); await storage.set('measurements', m); };
+  const saveMeasurements = async (m) => {
+    setMeasurements(m);
+    await storage.set('measurements', m);
+    const profileToLock = await storage.get('profile', profile);
+    lockGoalIfNeeded(profileToLock, m, async (np) => {
+      setProfile(np);
+      await storage.set('profile', np);
+    });
+  };
   const saveDaily = async (d) => { setDailyLogs(d); await storage.set('dailyLogs', d); };
 
   const dismissAlert = async (id) => {
@@ -1029,8 +1157,8 @@ function LongevityAppV4() {
       <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: `${pageTopPadding} 16px 0` }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
         {tab === 'tasks' && <TasksTab history={history} onStart={(id) => setCurrentTask(id)} />}
-        {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} />}
-        {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} />}
+        {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} setTab={setTab} />}
+        {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} profile={profile} setTab={setTab} />}
         {tab === 'profile' && <ProfileTab profile={profile} saveProfile={saveProfile} measurements={measurements} onReport={() => setShowReport(true)} onReset={() => setShowReset(true)} onExport={exportData} onImport={importData} onGloss={setGlossOpen} />}
       </div>
 
@@ -1910,6 +2038,17 @@ const METRIC_OPTIMAL = {
   bpDia: { min: 70, max: 80, note: '<80 ottimale, 80-89 elevata, ≥90 ipertensione' }
 };
 
+const evalAbsolute = (key, value) => {
+  const optimal = METRIC_OPTIMAL[key];
+  if (!optimal) return null;
+  const v = parseDecimal(value);
+  if (!v) return null;
+  const buffer = (optimal.max - optimal.min) * 0.15;
+  if (v >= optimal.min && v <= optimal.max) return { status: 'ok', color: '#10b981', icon: '🟢', label: 'In range ottimale' };
+  if (v >= optimal.min - buffer && v <= optimal.max + buffer) return { status: 'warn', color: '#f59e0b', icon: '🟡', label: 'Borderline' };
+  return { status: 'out', color: '#ef4444', icon: '🔴', label: 'Fuori range' };
+};
+
 const calcTrendLine = (points) => {
   const clean = (points || []).map(p => parseDecimal(p.value)).filter(Boolean);
   const n = clean.length;
@@ -1927,9 +2066,10 @@ const calcTrendLine = (points) => {
   return { slope, intercept };
 };
 
-const FullChartModal = ({ metric, points, onClose }) => {
+const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose }) => {
   const clean = (points || []).map(p => ({ ...p, value: parseDecimal(p.value) })).filter(p => p.value).sort((a, b) => new Date(a.date) - new Date(b.date));
   if (!metric) return null;
+  const goal = calcGoals(profile, measurements).find(g => g.id === metric.key);
 
   const width = 340;
   const height = 180;
@@ -2004,6 +2144,17 @@ const FullChartModal = ({ metric, points, onClose }) => {
             💡 Range ottimale per uomo 50+: {optimal.min}-{optimal.max}. {optimal.note}
           </div>
         )}
+
+        {goal && (
+          <div style={{ marginTop: 14, padding: 12, borderRadius: 10, backgroundColor: 'rgba(132,204,22,0.08)', border: '1px solid rgba(132,204,22,0.2)' }}>
+            <div style={{ ...labelTiny, marginBottom: 7 }}>Obiettivo</div>
+            <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.9)' }}>Target T+6m: {goal.t6 != null ? fmtNumber(goal.t6) : '—'} {goal.unit}</div>
+            {paceText(goal.current, goal.expectedNow, goal.better) && (
+              <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.68)', marginTop: 5 }}>Pace: {paceText(goal.current, goal.expectedNow, goal.better)}</div>
+            )}
+            <button onClick={() => { onClose(); setTab('goals'); }} style={{ ...btnSecondary, width: '100%', marginTop: 10 }}>Vai a obiettivi</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2032,13 +2183,14 @@ const RecentHistoryCard = ({ history, compact = false }) => {
   );
 };
 
-const GoalsTab = ({ goals, prs, history, onGloss, profile, saveProfile }) => {
+const GoalsTab = ({ goals, prs, history, onGloss, profile, saveProfile, setTab }) => {
   const saveCustomTarget = (goalId, t3, t6, t12) => {
     saveProfile({ ...profile, customGoalTargets: { ...(profile.customGoalTargets || {}), [goalId]: { t3, t6, t12 } } });
   };
   const resetCustomTarget = (goalId) => {
     const next = { ...(profile.customGoalTargets || {}) };
     delete next[goalId];
+    if (GOAL_CUSTOM_ALIASES[goalId]) delete next[GOAL_CUSTOM_ALIASES[goalId]];
     saveProfile({ ...profile, customGoalTargets: next });
   };
   return (
@@ -2053,7 +2205,7 @@ const GoalsTab = ({ goals, prs, history, onGloss, profile, saveProfile }) => {
           <Target size={40} color="rgba(255,255,255,0.3)" style={{ margin: '0 auto' }} />
           <div style={{ marginTop: 12, color: 'rgba(255,255,255,0.6)', fontSize: FS.base }}>Aggiungi misurazioni per vedere gli obiettivi</div>
         </div>
-      ) : goals.map(g => <GoalCard key={g.id} goal={g} onGloss={onGloss} onSaveCustom={saveCustomTarget} onResetCustom={resetCustomTarget} />)}
+      ) : goals.map(g => <GoalCard key={g.id} goal={g} onGloss={onGloss} onSaveCustom={saveCustomTarget} onResetCustom={resetCustomTarget} onViewHistory={() => setTab('measures')} />)}
 
       {Object.keys(prs).length > 0 && (
         <div style={cardLarge}>
@@ -2081,7 +2233,7 @@ const GoalsTab = ({ goals, prs, history, onGloss, profile, saveProfile }) => {
   );
 };
 
-const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
+const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom, onViewHistory }) => {
   const [editing, setEditing] = useState(false);
   const [editT3, setEditT3] = useState('');
   const [editT6, setEditT6] = useState('');
@@ -2089,12 +2241,22 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
 
   const cur = typeof goal.current === 'number' ? goal.current : null;
   const t6val = typeof goal.t6 === 'number' ? goal.t6 : null;
-  let progress = 0;
-  if (cur !== null && t6val !== null && goal.baseline) {
-    const baseline = parseDecimal(goal.baseline);
-    if (goal.better === 'up' && t6val > baseline) progress = Math.max(0, Math.min(100, ((cur - baseline) / (t6val - baseline)) * 100));
-    if (goal.better === 'down' && t6val < baseline) progress = Math.max(0, Math.min(100, ((baseline - cur) / (baseline - t6val)) * 100));
-  }
+  const baseline = parseDecimal(goal.baseline);
+  const progressFor = (value) => {
+    if (value === null || value === undefined || !baseline || t6val === null || t6val === baseline) return null;
+    const raw = goal.better === 'down'
+      ? ((baseline - value) / (baseline - t6val)) * 100
+      : ((value - baseline) / (t6val - baseline)) * 100;
+    return Math.max(0, Math.min(100, raw));
+  };
+  const currentProgress = progressFor(cur);
+  const expectedProgress = progressFor(goal.expectedNow);
+  const monthsElapsed = goal.baselineDate ? Math.max(0, (new Date() - new Date(goal.baselineDate)) / (1000 * 60 * 60 * 24 * 30.44)) : 0;
+  const nearestTarget = [3, 6, 12].reduce((closest, month) => (
+    Math.abs(monthsElapsed - month) < Math.abs(monthsElapsed - closest) ? month : closest
+  ), 3);
+  const paceLabel = paceText(goal.current, goal.expectedNow, goal.better);
+  const paceColor = goal.pace === 'behind' ? COLORS.recovery : COLORS.success;
 
   const startEditing = () => {
     setEditT3(goal.t3 != null ? String(goal.t3) : '');
@@ -2120,9 +2282,17 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
             <span style={{ fontSize: FS['2xl'], fontWeight: 600 }}>{goal.current != null ? fmtNumber(goal.current) : '—'}</span>
             <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{goal.unit}</span>
           </div>
+          {goal.pace && paceLabel && (
+            <div style={{ fontSize: FS.xs, color: paceColor, fontWeight: 600, marginTop: 5 }}>
+              {goal.pace === 'behind' ? '🟡' : '🟢'} {paceLabel}
+            </div>
+          )}
         </div>
         {!editing && (
-          <button onClick={startEditing} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: FS.xs, cursor: 'pointer', padding: 4, minHeight: 44 }}>Modifica</button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+            <button onClick={startEditing} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: FS.xs, cursor: 'pointer', padding: 4, minHeight: 36 }}>Modifica</button>
+            <button onClick={onViewHistory} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: FS.tiny, cursor: 'pointer', padding: 4, minHeight: 36 }}>Vedi storico</button>
+          </div>
         )}
       </div>
 
@@ -2145,23 +2315,34 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
       ) : (
         <>
           {goal.info && <div style={{ fontSize: FS.xs, color: '#84cc16', marginBottom: 8, fontStyle: 'italic' }}>💡 {goal.info}</div>}
+          {baseline && goal.baselineDate && (
+            <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.5)', marginBottom: 10 }}>
+              Baseline: {fmtNumber(baseline)} {goal.unit} · da {new Date(goal.baselineDate).toLocaleDateString('it-IT')}
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, textAlign: 'center', marginBottom: 12 }}>
-            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
-              <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>3 mesi</div>
-              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t3 != null ? fmtNumber(goal.t3) : '—'}</div>
-            </div>
-            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
-              <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>6 mesi</div>
-              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t6 != null ? fmtNumber(goal.t6) : '—'}</div>
-            </div>
-            <div style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 8 }}>
-              <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>12 mesi</div>
-              <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{goal.t12 != null ? fmtNumber(goal.t12) : '—'}</div>
-            </div>
+            {[[3, goal.t3], [6, goal.t6], [12, goal.t12]].map(([month, target]) => (
+              <div key={month} style={{ backgroundColor: nearestTarget === month ? 'rgba(132,204,22,0.14)' : 'rgba(255,255,255,0.05)', border: nearestTarget === month ? '1px solid rgba(132,204,22,0.36)' : '1px solid transparent', borderRadius: 8, padding: 8 }}>
+                <div style={{ fontSize: FS.tiny, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>{month} mesi</div>
+                <div style={{ fontSize: FS.sm, fontWeight: 600, marginTop: 2 }}>{target != null ? fmtNumber(target) : '—'}</div>
+              </div>
+            ))}
           </div>
-          {cur !== null && t6val !== null && goal.baseline && (
-            <div style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ height: '100%', backgroundColor: '#84cc16', width: `${progress}%` }} />
+          {currentProgress !== null && expectedProgress !== null && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.tiny, color: 'rgba(255,255,255,0.38)', marginBottom: 5 }}>
+                <span>Baseline</span>
+                <span>T+6m</span>
+              </div>
+              <div style={{ position: 'relative', height: 12, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}>
+                <div style={{ height: '100%', backgroundColor: 'rgba(132,204,22,0.38)', borderRadius: 6, width: `${currentProgress}%` }} />
+                <div title="Pace atteso" style={{ position: 'absolute', top: -3, left: `calc(${expectedProgress}% - 1px)`, width: 2, height: 18, backgroundColor: '#fff', opacity: 0.8 }} />
+                <div title="Valore corrente" style={{ position: 'absolute', top: 1, left: `calc(${currentProgress}% - 5px)`, width: 10, height: 10, borderRadius: '50%', backgroundColor: '#84cc16', border: '2px solid #111', boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.tiny, color: 'rgba(255,255,255,0.45)', marginTop: 6 }}>
+                <span>Atteso {fmtNumber(goal.expectedNow)}</span>
+                <span>Oggi {cur != null ? fmtNumber(cur) : '—'}</span>
+              </div>
             </div>
           )}
         </>
@@ -2171,7 +2352,7 @@ const GoalCard = ({ goal, onGloss, onSaveCustom, onResetCustom }) => {
 };
 
 // ============ MEASURES ============
-const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
+const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss, profile, setTab }) => {
   const [showNew, setShowNew] = useState(false);
   const [newM, setNewM] = useState(emptyMeasurementDraft);
   const [chartModal, setChartModal] = useState(null);
@@ -2261,6 +2442,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
         const trend = calcTrend(f.key, f.better);
         const Icon = !trend || Math.abs(trend.delta) < 2 ? Minus : (trend.delta > 0 ? TrendingUp : TrendingDown);
         const trendColor = !trend ? 'rgba(255,255,255,0.45)' : trend.positive ? '#84cc16' : '#f87171';
+        const absolute = evalAbsolute(f.key, latest);
         return (
           <TouchablePress key={f.key} onClick={() => { haptic('light'); setChartModal(f); }} style={{ ...card, width: '100%', textAlign: 'left', color: '#fff', borderColor: `${f.color}44`, minHeight: 44 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -2283,11 +2465,24 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
               <span style={{ fontSize: FS['2xl'], fontWeight: 700, fontFamily: FONT_MONO }}>{fmtNumber(latest)}</span>
               <span style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.4)' }}>{f.unit}</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: trendColor }}>
-                <Icon size={18} />
-                  <span style={{ fontSize: FS.sm, fontWeight: 600 }}>{trend ? `${trend.delta > 0 ? '+' : ''}${trend.delta.toFixed(1)}%` : '—'}</span>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginTop: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                  <div>
+                    <div style={labelTiny}>Trend</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: trendColor, marginTop: 2 }}>
+                      <Icon size={18} />
+                      <span style={{ fontSize: FS.sm, fontWeight: 600 }}>{trend ? `${trend.delta > 0 ? '+' : ''}${trend.delta.toFixed(1)}%` : '—'}</span>
+                    </div>
+                  </div>
+                  {absolute && (
+                    <div>
+                      <div style={labelTiny}>Stato</div>
+                      <div style={{ fontSize: FS.xs, color: absolute.color, fontWeight: 600, marginTop: 4 }}>
+                        {absolute.icon} {absolute.label}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>
                   {trend ? `Da ${fmtNumber(trend.previous)} → ${fmtNumber(trend.latest)} (${points.length} mis.)` : `${points.length} misurazione`}
@@ -2306,7 +2501,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss }) => {
         </div>
       )}
 
-      {chartModal && <FullChartModal metric={chartModal} points={getPointsFor(chartModal.key, 12)} onClose={() => setChartModal(null)} />}
+      {chartModal && <FullChartModal metric={chartModal} points={getPointsFor(chartModal.key, 12)} profile={profile} measurements={measurements} setTab={setTab} onClose={() => setChartModal(null)} />}
     </div>
   );
 };
@@ -2582,8 +2777,15 @@ const generateReport = (profile, history, measurements, dailyLogs, goals, health
     if (latest.hrv) r += `- HRV: ${latest.hrv} ms\n`;
   }
 
-  r += `\n## Obiettivi 6 mesi\n`;
-  goals.filter(g => g.id !== 'prot').forEach(g => { r += `- ${g.label}: ${g.current ?? '—'}${g.unit} → ${g.t6 ?? '—'}\n`; });
+  r += `\n## Obiettivi\n`;
+  goals.forEach(g => {
+    const pace = paceText(g.current, g.expectedNow, g.better);
+    const paceIcon = g.pace === 'behind' ? '🟡' : '🟢';
+    r += `\n### ${g.label}${g.baselineDate ? ` (locked da ${g.baselineDate})` : ''}\n`;
+    r += `${g.current != null ? fmtNumber(g.current) : '—'} ${g.unit} (target T+6m: ${g.t6 != null ? fmtNumber(g.t6) : '—'})\n\n`;
+    r += `Baseline: ${g.baseline != null ? fmtNumber(g.baseline) : '—'}${g.baselineDate ? ` (da ${g.baselineDate})` : ''} · oggi: ${g.current != null ? fmtNumber(g.current) : '—'} · pace expected: ${g.expectedNow != null ? fmtNumber(g.expectedNow) : '—'}\n`;
+    if (pace) r += `${paceIcon} ${pace}\n`;
+  });
 
   r += `\n## Aderenza ultime 4 settimane\n- Sessioni totali: ${recent.length}/20 (${Math.round((recent.length / 20) * 100)}%)\n`;
   Object.values(TASKS).filter(t => !t.travel).forEach(t => {
