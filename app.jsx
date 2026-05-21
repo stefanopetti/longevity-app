@@ -773,6 +773,38 @@ const GOAL_CUSTOM_ALIASES = {
   hrRest: 'hrR'
 };
 
+const computeTargetsFromBaseline = (key, baseValue, baselineDate) => {
+  if (key === 'vo2max') return {
+    t3: +(baseValue * 1.05).toFixed(1),
+    t6: +(baseValue * 1.11).toFixed(1),
+    t12: +(baseValue * 1.165).toFixed(1),
+    baselineDate
+  };
+  if (key === 'muscleMassKg') return {
+    t3: null,
+    t6: +(baseValue + 1.5).toFixed(1),
+    t12: +(baseValue + 2.75).toFixed(1),
+    baselineDate
+  };
+  if (key === 'bodyFat') {
+    if (baseValue > 20) return {
+      t3: +(baseValue - 1.5).toFixed(1),
+      t6: +(baseValue - 3).toFixed(1),
+      t12: Math.max(15, +(baseValue - 5).toFixed(1)),
+      baselineDate
+    };
+    return { t3: baseValue, t6: baseValue, t12: baseValue, baselineDate };
+  }
+  if (key === 'hrRest') return { t3: null, t6: baseValue - 3, t12: baseValue - 5, baselineDate };
+  if (key === 'hrv') return {
+    t3: +(baseValue * 1.05).toFixed(0),
+    t6: +(baseValue * 1.10).toFixed(0),
+    t12: +(baseValue * 1.12).toFixed(0),
+    baselineDate
+  };
+  return null;
+};
+
 const lockGoalIfNeeded = (profile, measurements, saveProfile) => {
   const sortedM = (measurements || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
   if (sortedM.length === 0) return profile;
@@ -782,48 +814,19 @@ const lockGoalIfNeeded = (profile, measurements, saveProfile) => {
   const metricsToLock = ['vo2max', 'muscleMassKg', 'bodyFat', 'hrRest', 'hrv', 'weight'];
 
   metricsToLock.forEach(key => {
-    if (baselines[key]) return;
     const firstWithKey = sortedM.find(m => m[key] !== undefined && m[key] !== '' && m[key] !== null);
     if (!firstWithKey) return;
-    const baseValue = parseDecimal(firstWithKey[key]);
-    if (!baseValue) return;
+    const newBaseValue = parseDecimal(firstWithKey[key]);
+    if (!newBaseValue) return;
+    const existingBaseline = baselines[key];
+    const shouldLock = !existingBaseline;
+    const shouldReassess = existingBaseline && new Date(firstWithKey.date) < new Date(existingBaseline.date);
+    if (!shouldLock && !shouldReassess) return;
 
-    baselines[key] = { value: baseValue, date: firstWithKey.date };
-    if (!targets[key] && key === 'vo2max') {
-      targets[key] = {
-        t3: +(baseValue * 1.05).toFixed(1),
-        t6: +(baseValue * 1.11).toFixed(1),
-        t12: +(baseValue * 1.165).toFixed(1),
-        baselineDate: firstWithKey.date
-      };
-    } else if (!targets[key] && key === 'muscleMassKg') {
-      targets[key] = {
-        t3: null,
-        t6: +(baseValue + 1.5).toFixed(1),
-        t12: +(baseValue + 2.75).toFixed(1),
-        baselineDate: firstWithKey.date
-      };
-    } else if (!targets[key] && key === 'bodyFat') {
-      targets[key] = baseValue > 20 ? {
-        t3: +(baseValue - 1.5).toFixed(1),
-        t6: +(baseValue - 3).toFixed(1),
-        t12: Math.max(15, +(baseValue - 5).toFixed(1)),
-        baselineDate: firstWithKey.date
-      } : { t3: baseValue, t6: baseValue, t12: baseValue, baselineDate: firstWithKey.date };
-    } else if (!targets[key] && key === 'hrRest') {
-      targets[key] = {
-        t3: null,
-        t6: baseValue - 3,
-        t12: baseValue - 5,
-        baselineDate: firstWithKey.date
-      };
-    } else if (!targets[key] && key === 'hrv') {
-      targets[key] = {
-        t3: +(baseValue * 1.05).toFixed(0),
-        t6: +(baseValue * 1.10).toFixed(0),
-        t12: +(baseValue * 1.12).toFixed(0),
-        baselineDate: firstWithKey.date
-      };
+    baselines[key] = { value: newBaseValue, date: firstWithKey.date };
+    const nextTargets = computeTargetsFromBaseline(key, newBaseValue, firstWithKey.date);
+    if (nextTargets && (shouldReassess || !targets[key])) {
+      targets[key] = nextTargets;
     }
     changed = true;
   });
@@ -2144,7 +2147,9 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const range = max - min || 1;
   const firstPointDate = clean[0] ? new Date(clean[0].date) : new Date();
   const lastPointDate = clean[clean.length - 1] ? new Date(clean[clean.length - 1].date) : firstPointDate;
-  const startDate = goal?.baselineDate ? new Date(goal.baselineDate) : firstPointDate;
+  const startDate = goal?.baselineDate
+    ? new Date(Math.min(new Date(goal.baselineDate).getTime(), firstPointDate.getTime()))
+    : firstPointDate;
   const lastPointPlusPadding = new Date(lastPointDate);
   lastPointPlusPadding.setDate(lastPointPlusPadding.getDate() + 14);
   const targetEndDate = goal?.baselineDate ? new Date(goal.baselineDate) : null;
