@@ -144,6 +144,18 @@ const GLOSSARY = {
     title: 'Recovery-aware',
     body: 'Se il check-in mattutino mostra energia<5 o soreness>7, il suggerimento mantiene lo stesso peso ma propone +1 rep invece di aumentare il carico, per evitare progressioni in stato di recupero insufficiente.'
   },
+  'suggerimento giorno': {
+    title: 'Suggerimento del giorno',
+    body: 'L\'app analizza ogni giorno il tuo recovery (energia/soreness), il bilanciamento dei carichi degli ultimi giorni e le sessioni saltate nella settimana, e ti suggerisce la task più adatta. La programmazione settimanale fissa (Upper Lun, Zone2 Mar, ecc.) resta il riferimento di base — il suggerimento la integra solo quando serve.'
+  },
+  'recovery override': {
+    title: 'Recovery override',
+    body: 'Se al check-in mattutino energia<5 o soreness>7, l\'app sostituisce eventuali sessioni di forza con Zone2 o Movement per favorire il recupero attivo invece di accumulare fatica.'
+  },
+  'bilanciamento carico': {
+    title: 'Bilanciamento carico',
+    body: 'Dopo 2 sessioni di forza in giorni consecutivi, l\'app evita di proporre una terza forza consecutiva per dare ai muscoli il tempo di recupero necessario alla supercompensazione.'
+  },
   OggiSuggerito: {
     title: 'Come funziona "Oggi suggerito"',
     body: 'L\'app suggerisce la sessione del giorno basandosi su:\n\n1. Giorno della settimana\n   • Lun → Forza Upper\n   • Mar → Zone 2\n   • Mer → Movement Quality (PT)\n   • Gio → Norwegian 4x4\n   • Ven → Forza Lower\n\n2. Cosa hai già fatto questa settimana\nSe oggi è suggerito "Upper" ma l\'hai già fatto, suggerisce un\'altra task ancora da completare.\n\n3. Recovery (se hai fatto check-in oggi)\nSe energia bassa o soreness alta, suggerisce alternativa più leggera.\n\nPuoi sempre scegliere altro da Sessioni: la schedule è flessibile.'
@@ -483,6 +495,54 @@ const weekKey = (date = new Date()) => {
   return `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
 };
 const todayDayOfWeek = () => new Date().getDay() || 7;
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear()
+  && a.getMonth() === b.getMonth()
+  && a.getDate() === b.getDate();
+
+const suggestTodayTask = (history, dailyLogs, todayCheckin, today) => {
+  const now = new Date();
+  const workouts = history.workouts || [];
+  const doneToday = workouts.filter(w => sameDay(new Date(w.date), now));
+  const doneThisWeek = workouts.filter(w => weekKey(new Date(w.date)) === weekKey(now));
+  const isStrength = (taskId) => ['upper', 'lower', 'norwegian'].includes(taskId);
+  const priorityOrder = (taskId) => ({ upper: 1, lower: 1, norwegian: 2, zone2: 3, movement: 4, travelStrength: 5, travelCardio: 5 }[taskId] || 99);
+  const isDoneThisWeek = (taskId) => doneThisWeek.some(w => w.taskId === taskId);
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dayBefore = new Date(now);
+  dayBefore.setDate(dayBefore.getDate() - 2);
+  const yesterdayStrength = workouts.some(w => sameDay(new Date(w.date), yesterday) && isStrength(w.taskId));
+  const dayBeforeStrength = workouts.some(w => sameDay(new Date(w.date), dayBefore) && isStrength(w.taskId));
+
+  const defaultToday = Object.values(TASKS).find(t => !t.travel && t.suggestedDay === today);
+  const skipped = Object.values(TASKS)
+    .filter(t => !t.travel && t.suggestedDay < today && !isDoneThisWeek(t.id))
+    .sort((a, b) => priorityOrder(a.id) - priorityOrder(b.id));
+
+  if (todayCheckin && (todayCheckin.energy < 5 || todayCheckin.soreness > 7)) {
+    if (defaultToday && isStrength(defaultToday.id)) {
+      const recoveryAlt = TASKS.zone2 || TASKS.movement;
+      return { taskId: recoveryAlt.id, reason: 'Recovery basso: Zone2 invece di forza pesante', priority: 'alert' };
+    }
+  }
+
+  if (yesterdayStrength && dayBeforeStrength && defaultToday && isStrength(defaultToday.id)) {
+    return { taskId: 'zone2', reason: '2 sessioni forza consecutive: oggi recovery attivo', priority: 'alert' };
+  }
+
+  if (skipped.length > 0) {
+    const main = skipped[0];
+    const alternatives = today >= 5 ? skipped.slice(1, 3).map(t => t.id) : [];
+    return { taskId: main.id, reason: `Recupero ${main.name} saltata`, priority: 'alert', alternatives };
+  }
+
+  if (defaultToday && !isDoneThisWeek(defaultToday.id)) {
+    return { taskId: defaultToday.id, reason: 'Da programma settimanale', priority: 'regular' };
+  }
+
+  return null;
+};
 
 // ============ SALUTO + FRASI CONTESTUALI ============
 const getGreeting = (name) => {
@@ -1289,10 +1349,11 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
   });
   const totalTasks = STANDARD_TASKS.length;
   const today = todayDayOfWeek();
-  const suggestedTaskToday = Object.values(TASKS).filter(t => !t.travel).find(t => t.suggestedDay === today && !doneThisWeek.some(w => w.taskId === t.id));
 
   const greeting = getGreeting(profile?.name);
   const todayCheckIn = dailyLogs[todayKey()]?.checkIn;
+  const smartSuggestion = suggestTodayTask(history, dailyLogs, todayCheckIn, today);
+  const suggestedTaskToday = smartSuggestion ? TASKS[smartSuggestion.taskId] : null;
   const ctxMsg = getContextualMessage(streak, coveredSlots.size, totalTasks, todayCheckIn, [], suggestedTaskToday);
 
   return (
@@ -1350,19 +1411,34 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
       <div>
         <div style={{ ...label, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 2 }}>Oggi suggerito<InfoButton glossKey="OggiSuggerito" onClick={onGloss} /></div>
         {suggestedTaskToday ? (
-          <TouchablePress onClick={() => { haptic('light'); onStartTask(suggestedTaskToday.id); }} style={{ width: '100%', background: 'linear-gradient(135deg, #ffffff, #f8f8f8)', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', color: '#000', borderRadius: 20, padding: 20, textAlign: 'left', border: 'none', minHeight: 44 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'rgba(0,0,0,0.5)' }}>Suggerita per oggi</div>
-                <div style={{ fontSize: FS['2xl'], fontWeight: 600, marginTop: 4 }}>{suggestedTaskToday.icon} {suggestedTaskToday.name}</div>
+          <>
+            <TouchablePress onClick={() => { haptic('light'); onStartTask(suggestedTaskToday.id); }} style={{ width: '100%', background: smartSuggestion.priority === 'alert' ? 'rgba(245,158,11,0.1)' : 'linear-gradient(135deg, #ffffff, #f8f8f8)', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', color: smartSuggestion.priority === 'alert' ? '#fff' : '#000', borderRadius: 20, padding: 20, textAlign: 'left', border: smartSuggestion.priority === 'alert' ? `1px solid ${COLORS.recovery}` : 'none', minHeight: 44 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: FS.xs, textTransform: 'uppercase', letterSpacing: '0.15em', color: smartSuggestion.priority === 'alert' ? COLORS.recovery : 'rgba(0,0,0,0.5)' }}>Suggerita per oggi</div>
+                  <div style={{ fontSize: FS['2xl'], fontWeight: 600, marginTop: 4 }}>{suggestedTaskToday.icon} {suggestedTaskToday.name}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 12, color: smartSuggestion.priority === 'alert' ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)', marginTop: 6 }}>
+                    <span>{smartSuggestion.reason}</span>
+                    <InfoButton glossKey={smartSuggestion.reason.startsWith('Recovery basso') ? 'recovery override' : smartSuggestion.reason.startsWith('2 sessioni forza') ? 'bilanciamento carico' : 'suggerimento giorno'} onClick={onGloss} />
+                  </div>
+                </div>
+                <Play size={32} fill="currentColor" />
               </div>
-              <Play size={32} fill="currentColor" />
-            </div>
-          </TouchablePress>
+            </TouchablePress>
+            {smartSuggestion.alternatives?.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 10, fontSize: FS.xs, color: 'rgba(255,255,255,0.5)' }}>
+                <span>Oppure:</span>
+                {smartSuggestion.alternatives.map(taskId => (
+                  <TouchablePress key={taskId} onClick={() => { haptic('light'); onStartTask(taskId); }} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', borderRadius: 8, padding: '6px 8px', minHeight: 32 }}>
+                    {TASKS[taskId].name}
+                  </TouchablePress>
+                ))}
+              </div>
+            )}
+          </>
         ) : (
           <div style={cardLarge}>
-            <div style={{ fontSize: FS.xl, fontWeight: 300 }}>Riposo o sessione a scelta</div>
-            <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>Vai su Sessioni per scegliere</div>
+            <div style={{ fontSize: FS.xl, fontWeight: 300 }}>🎉 Settimana completata, riposo o sessione bonus a scelta</div>
           </div>
         )}
       </div>
