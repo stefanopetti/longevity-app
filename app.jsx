@@ -2152,9 +2152,10 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const endDate = targetEndDate && targetEndDate > lastPointPlusPadding ? targetEndDate : lastPointPlusPadding;
   const totalRangeMs = endDate - startDate || 1;
   const totalRangeMonths = totalRangeMs / (1000 * 60 * 60 * 24 * 30.44);
+  const innerPaddingX = 14;
   const xScale = (date) => !goal?.baselineDate && clean.length < 2
     ? pad.left + chartW / 2
-    : pad.left + ((new Date(date) - startDate) / totalRangeMs) * chartW;
+    : pad.left + innerPaddingX + ((new Date(date) - startDate) / totalRangeMs) * (chartW - innerPaddingX * 2);
   const yFor = (v) => pad.top + chartH - ((v - min) / range) * chartH;
   const dataPath = clean.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.date).toFixed(1)} ${yFor(p.value).toFixed(1)}`).join(' ');
   const trend = clean.length >= 3 ? calcTrendLine(clean) : null;
