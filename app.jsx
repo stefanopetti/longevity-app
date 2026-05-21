@@ -136,6 +136,14 @@ const GLOSSARY = {
     title: 'Double Progression',
     body: 'Strategia evidence-based:\n\n1. Fai il bottom del range reps (es. 8 su 8-12)\n2. Sessione dopo sessione, aggiungi reps con stesso carico\n3. Quando raggiungi il top del range con RIR ≥2 (12 reps con RIR 2), aumenta carico di 2.5kg\n4. Riparti dal bottom del range con il nuovo carico\n\nSemplice e funziona.'
   },
+  'progressione carichi': {
+    title: 'Progressione carichi',
+    body: 'Aumento del +5% (min 0,5 kg, max 5 kg, arrotondato a step di 0,5 kg) quando completi tutte le serie al target alto del range reps. Approccio double progression evidence-based.'
+  },
+  'recovery-aware': {
+    title: 'Recovery-aware',
+    body: 'Se il check-in mattutino mostra energia<5 o soreness>7, il suggerimento mantiene lo stesso peso ma propone +1 rep invece di aumentare il carico, per evitare progressioni in stato di recupero insufficiente.'
+  },
   OggiSuggerito: {
     title: 'Come funziona "Oggi suggerito"',
     body: 'L\'app suggerisce la sessione del giorno basandosi su:\n\n1. Giorno della settimana\n   • Lun → Forza Upper\n   • Mar → Zone 2\n   • Mer → Movement Quality (PT)\n   • Gio → Norwegian 4x4\n   • Ven → Forza Lower\n\n2. Cosa hai già fatto questa settimana\nSe oggi è suggerito "Upper" ma l\'hai già fatto, suggerisce un\'altra task ancora da completare.\n\n3. Recovery (se hai fatto check-in oggi)\nSe energia bassa o soreness alta, suggerisce alternativa più leggera.\n\nPuoi sempre scegliere altro da Sessioni: la schedule è flessibile.'
@@ -516,67 +524,66 @@ const getContextualMessage = (streak, coveredSlots, totalTasks, todayCheckIn, re
 };
 
 // ============ DOUBLE PROGRESSION ENGINE ============
-// Per ogni esercizio, calcola il target suggerito per la prossima sessione
-const suggestNextSession = (exerciseName, history) => {
-  const sessions = (history.workouts || [])
-    .filter(w => w.exercises?.some(e => e.name === exerciseName))
-    .slice(-1);
-  if (sessions.length === 0) return null;
+const roundLoadIncrement = (increment) => Math.round(increment / 0.5) * 0.5;
 
-  const lastEx = sessions[0].exercises.find(e => e.name === exerciseName);
-  if (!lastEx || !lastEx.sets) return null;
+const calculateNextLoad = (exercise, lastSession, todayCheckin) => {
+  const lastExercise = lastSession?.exercises?.find(ex => ex.name === exercise.name);
+  const lastSets = (lastExercise?.sets || []).filter(s => s.reps !== undefined && s.reps !== '');
+  if (lastSets.length === 0) return null;
 
-  // Trova range reps dall'esercizio in TASKS
-  let range = null, exType = 'weighted';
-  Object.values(TASKS).forEach(t => {
-    if (t.exercises) {
-      const found = t.exercises.find(e => e.name === exerciseName);
-      if (found) { range = found.repsRange; exType = found.type; }
+  const repsTarget = exercise.repsRange?.[1] ?? exercise.repsRange?.[0];
+  if (!repsTarget) return null;
+
+  const lowRecovery = !!todayCheckin && (todayCheckin.energy < 5 || todayCheckin.soreness > 7);
+  const hasWeight = lastSets.some(s => parseDecimal(s.weight) > 0);
+  const lastWeight = hasWeight ? Math.max(...lastSets.map(s => parseDecimal(s.weight))) : null;
+  const lastTarget = Math.max(...lastSets.map(s => parseInt(s.duration ?? s.reps) || 0));
+  const allAtTarget = lastSets.every(s => (parseInt(s.duration ?? s.reps) || 0) >= repsTarget);
+
+  if (hasWeight) {
+    if (lowRecovery) {
+      return {
+        suggestedWeight: lastWeight,
+        suggestedReps: repsTarget + 1,
+        reason: 'recovery-aware: +1 rep invece di +peso'
+      };
     }
-  });
-  if (!range) return null;
+    if (!allAtTarget) {
+      return {
+        suggestedWeight: lastWeight,
+        suggestedReps: lastTarget,
+        reason: 'consolidamento'
+      };
+    }
 
-  // Analizza ultima sessione: tutte le serie al top del range con RIR ≥2?
-  const validSets = lastEx.sets.filter(s => s.reps && s.weight !== undefined);
-  if (validSets.length === 0) return null;
-
-  const maxWeight = Math.max(...validSets.map(s => parseDecimal(s.weight)));
-  const allTopRange = validSets.every(s => parseInt(s.reps) >= range[1] && (s.rir ?? 2) >= 2);
-  const someUnder = validSets.some(s => parseInt(s.reps) < range[0] || (s.rir ?? 2) <= 0);
-  const avgReps = Math.round(validSets.reduce((a, s) => a + (parseInt(s.reps) || 0), 0) / validSets.length);
-
-  let suggestion;
-  if (someUnder) {
-    suggestion = {
-      type: 'decrease',
-      weight: exType === 'weighted' ? Math.max(0, maxWeight - 2.5) : null,
-      reps: range[0],
-      msg: 'Ultima volta troppo difficile: riduci carico'
-    };
-  } else if (allTopRange && exType === 'weighted') {
-    suggestion = {
-      type: 'increase',
-      weight: maxWeight + 2.5,
-      reps: range[0],
-      msg: '🎯 Aumenta carico! +2.5kg, ricomincia dal bottom del range'
-    };
-  } else if (allTopRange && exType !== 'weighted') {
-    suggestion = {
-      type: 'increase_reps',
-      weight: null,
-      reps: range[1] + 1,
-      msg: 'Hai battuto il top: prova +1 rep o variante più difficile'
-    };
-  } else {
-    // Default: stesso carico, più reps
-    suggestion = {
-      type: 'progress',
-      weight: maxWeight || null,
-      reps: Math.min(avgReps + 1, range[1]),
-      msg: 'Stesso carico, prova ad aggiungere reps'
+    const increment = Math.max(0.5, Math.min(5, roundLoadIncrement(lastWeight * 0.05)));
+    return {
+      suggestedWeight: +(lastWeight + increment).toFixed(2),
+      suggestedReps: repsTarget,
+      reason: 'progressione'
     };
   }
-  return suggestion;
+
+  if (lowRecovery) {
+    return {
+      suggestedWeight: null,
+      suggestedReps: lastTarget,
+      reason: 'recovery: mantieni'
+    };
+  }
+  if (!allAtTarget) {
+    return {
+      suggestedWeight: null,
+      suggestedReps: lastTarget,
+      reason: 'consolidamento'
+    };
+  }
+
+  return {
+    suggestedWeight: null,
+    suggestedReps: lastTarget + (exercise.type === 'time' ? 5 : 1),
+    reason: 'progressione'
+  };
 };
 
 // ============ AUTO-ADJUSTMENT ENGINE ============
@@ -1137,6 +1144,7 @@ function LongevityAppV4() {
   };
 
   const todayCheckInDone = !!dailyLogs[todayKey()]?.checkIn;
+  const todayCheckin = dailyLogs[todayKey()]?.checkIn;
   const health = calcHealthScore(history, measurements, dailyLogs);
   const goals = calcGoals(profile, measurements);
   const streak = calcStreak(history);
@@ -1145,7 +1153,7 @@ function LongevityAppV4() {
   if (!loaded) return <div style={{ ...APP_STYLE, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: FS['2xl'] }}>Caricamento...</div>;
   if (currentTask) return (
     <>
-      <TaskScreen task={TASKS[currentTask]} history={history} saveHistory={saveHistory} onExit={() => setCurrentTask(null)} onGloss={setGlossOpen} />
+      <TaskScreen task={TASKS[currentTask]} history={history} saveHistory={saveHistory} todayCheckin={todayCheckin} onExit={() => setCurrentTask(null)} onGloss={setGlossOpen} />
       <GlossaryModal termKey={glossOpen} onClose={() => setGlossOpen(null)} />
     </>
   );
@@ -1423,24 +1431,25 @@ const TasksTab = ({ history, onStart }) => {
 };
 
 // ============ TASK ROUTER ============
-const TaskScreen = ({ task, history, saveHistory, onExit, onGloss }) => {
-  if (task.type === 'strength') return <StrengthSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} onGloss={onGloss} />;
+const TaskScreen = ({ task, history, saveHistory, todayCheckin, onExit, onGloss }) => {
+  if (task.type === 'strength') return <StrengthSession task={task} history={history} saveHistory={saveHistory} todayCheckin={todayCheckin} onExit={onExit} onGloss={onGloss} />;
   if (task.type === 'movement') return <MovementSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} />;
   if (task.type === 'travelCardio') return <TravelCardioSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} />;
   return <CardioSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} onGloss={onGloss} />;
 };
 
 // ============ STRENGTH (con last perf + RIR + double progression) ============
-const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
-  const lastSession = (history.workouts || []).filter(w => w.taskId === task.id).slice(-1)[0];
+const StrengthSession = ({ task, history, saveHistory, todayCheckin, onExit, onGloss }) => {
+  const lastSessionForExercise = (exerciseName) => (history.workouts || [])
+    .filter(w => w.taskId === task.id && w.exercises?.some(e => e.name === exerciseName))
+    .slice(-1)[0];
 
   const initEx = task.exercises.map((ex, i) => {
+    const lastSession = lastSessionForExercise(ex.name);
     const lastEx = lastSession?.exercises?.find(e => e.name === ex.name);
-    const suggestion = suggestNextSession(ex.name, history);
     return {
       name: ex.name, repsRange: ex.repsRange, rir: ex.rir, rest: ex.rest, note: ex.note, type: ex.type,
       lastPerf: lastEx ? { sets: lastEx.sets } : null,
-      suggestion,
       sets: Array.from({ length: ex.sets }, (_, j) => ({
         weight: lastEx?.sets?.[j]?.weight || '', reps: lastEx?.sets?.[j]?.reps || '', rir: 2, isPreFilled: !!lastEx
       }))
@@ -1463,6 +1472,19 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
 
   const updateSet = (ei, si, field, v) => setExercises(p => p.map((ex, i) => i === ei ? { ...ex, sets: ex.sets.map((s, j) => j === si ? { ...s, [field]: v, isPreFilled: false } : s) } : ex));
   const updateEx = (ei, field, v) => setExercises(p => p.map((ex, i) => i === ei ? { ...ex, [field]: v } : ex));
+  const useSuggestion = (ei, suggestion) => setExercises(p => p.map((ex, i) => {
+    if (i !== ei || !suggestion) return ex;
+    const suggestedWeight = suggestion.suggestedWeight != null ? parseDecimal(suggestion.suggestedWeight) : null;
+    return {
+      ...ex,
+      sets: ex.sets.map(s => ({
+        ...s,
+        weight: suggestedWeight != null ? String(suggestedWeight) : s.weight,
+        reps: String(suggestion.suggestedReps),
+        isPreFilled: false
+      }))
+    };
+  }));
   const startRest = (sec) => { setRestRemaining(sec); setRestActive(true); playBeep(660, 100, 0.3); };
   const skipRest = () => { setRestActive(false); setRestRemaining(0); clearTimeout(restRef.current); };
 
@@ -1476,8 +1498,6 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
       onExit();
     }
   };
-
-  const exTypeLabel = (type) => type === 'time' ? 'sec' : type === 'bodyweight' ? 'BW' : 'kg';
 
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
@@ -1502,7 +1522,10 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
         )}
 
         {/* LAVORO */}
-        {phase === 'work' && exercises.map((ex, ei) => (
+        {phase === 'work' && exercises.map((ex, ei) => {
+          const lastSession = lastSessionForExercise(ex.name);
+          const suggestion = calculateNextLoad(ex, lastSession, todayCheckin);
+          return (
           <div key={ei} style={{ ...cardLarge, marginBottom: 16 }}>
             <div style={{ marginBottom: 12 }}>
               <div style={label}>Esercizio {ei + 1}</div>
@@ -1514,19 +1537,18 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
               </div>
 
               {/* SUGGERIMENTO TARGET (Double progression) */}
-              {ex.suggestion && (
+              {suggestion && (
                 <div style={{ marginTop: 10, padding: 10, backgroundColor: 'rgba(132,204,22,0.08)', borderRadius: 8, border: '1px solid rgba(132,204,22,0.2)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: FS.xs, color: '#84cc16', fontWeight: 600 }}>
-                      🎯 OGGI SUGGERITO
-                      <InfoButton glossKey="DoubleProgression" onClick={onGloss} />
+                      💡 Suggerito
+                      <InfoButton glossKey="_nextLoadReason" onClick={() => { GLOSSARY._nextLoadReason = { title: 'Perché questo suggerimento?', body: suggestion.reason }; onGloss('_nextLoadReason'); }} />
                     </div>
-                    <button onClick={() => { GLOSSARY._whySuggestion = { title: 'Perché questo target?', body: `Esercizio: ${ex.name}\n\n${ex.suggestion.msg}\n\nLogica Double Progression:\n• Top range + RIR≥2 su tutte le serie → +2,5kg, ricomincia bottom range\n• Sotto range o RIR≤0 → -2,5kg\n• Altrimenti → stesso peso, +1 rep\n\nPer dettagli completi tap sull'ⓘ accanto a OGGI SUGGERITO.` }; onGloss('_whySuggestion'); }} style={{ background: 'rgba(132,204,22,0.2)', border: 'none', color: '#84cc16', padding: '3px 8px', borderRadius: 6, fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Perché?</button>
+                    <button onClick={() => useSuggestion(ei, suggestion)} style={{ background: 'rgba(132,204,22,0.2)', border: 'none', color: '#84cc16', padding: '3px 8px', borderRadius: 6, fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Usa suggerito</button>
                   </div>
                   <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.9)', marginTop: 4 }}>
-                    {ex.suggestion.weight !== null ? `${ex.suggestion.weight}${exTypeLabel(ex.type)} × ${ex.suggestion.reps} reps` : `${ex.suggestion.reps} ${ex.type === 'time' ? 'sec' : 'reps'}`}
+                    {suggestion.suggestedWeight != null ? `${fmtNumber(parseDecimal(suggestion.suggestedWeight))} kg × ` : ''}{suggestion.suggestedReps} {ex.type === 'time' ? 'sec' : 'reps'}
                   </div>
-                  <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.72)', marginTop: 4, lineHeight: 1.45 }}>{ex.suggestion.msg}</div>
                 </div>
               )}
 
@@ -1559,7 +1581,8 @@ const StrengthSession = ({ task, history, saveHistory, onExit, onGloss }) => {
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {phase === 'work' && <button onClick={() => setPhase('cooldown')} style={{ ...btnSecondary, width: '100%', marginBottom: 12 }}>Vai a cool-down →</button>}
 
