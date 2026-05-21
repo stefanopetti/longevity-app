@@ -2115,14 +2115,13 @@ const formatRangeText = (firstDate, lastDate) => {
   return `${Math.round(years * 10) / 10} anni`;
 };
 
-const pickXLabels = (points) => {
-  const n = points.length;
-  if (n === 0) return [];
-  if (n === 1) return [0];
-  if (n === 2) return [0, 1];
-  if (n <= 5) return [0, Math.floor(n / 2), n - 1];
-  if (n <= 11) return [0, Math.floor(n / 3), Math.floor((2 * n) / 3), n - 1];
-  return [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4), n - 1];
+const pickXLabelsTimeRange = (startDate, endDate, n = 4) => {
+  const labels = [];
+  const totalMs = endDate - startDate;
+  for (let i = 0; i <= n; i++) {
+    labels.push(new Date(startDate.getTime() + (totalMs * i / n)));
+  }
+  return labels;
 };
 
 const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose }) => {
@@ -2143,21 +2142,23 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const min = Math.min(minData, optimal?.min ?? minData, ...(goalValues.length ? goalValues : [minData]));
   const max = Math.max(maxData, optimal?.max ?? maxData, ...(goalValues.length ? goalValues : [maxData]));
   const range = max - min || 1;
-  const expectedEndDate = goal?.baselineDate ? new Date(goal.baselineDate) : null;
-  if (expectedEndDate) expectedEndDate.setMonth(expectedEndDate.getMonth() + 6);
-  const dateValues = clean.map(p => new Date(p.date).getTime()).filter(Number.isFinite);
-  if (goal?.baselineDate) dateValues.push(new Date(goal.baselineDate).getTime());
-  if (expectedEndDate) dateValues.push(expectedEndDate.getTime());
-  const minDate = dateValues.length ? Math.min(...dateValues) : 0;
-  const maxDate = dateValues.length ? Math.max(...dateValues) : 1;
-  const dateRange = maxDate - minDate || 1;
-  const xForDate = (date) => dateValues.length < 2 || maxDate === minDate
+  const firstPointDate = clean[0] ? new Date(clean[0].date) : new Date();
+  const lastPointDate = clean[clean.length - 1] ? new Date(clean[clean.length - 1].date) : firstPointDate;
+  const startDate = goal?.baselineDate ? new Date(goal.baselineDate) : firstPointDate;
+  const lastPointPlusPadding = new Date(lastPointDate);
+  lastPointPlusPadding.setDate(lastPointPlusPadding.getDate() + 14);
+  const targetEndDate = goal?.baselineDate ? new Date(goal.baselineDate) : null;
+  if (targetEndDate) targetEndDate.setMonth(targetEndDate.getMonth() + 6);
+  const endDate = targetEndDate && targetEndDate > lastPointPlusPadding ? targetEndDate : lastPointPlusPadding;
+  const totalRangeMs = endDate - startDate || 1;
+  const totalRangeMonths = totalRangeMs / (1000 * 60 * 60 * 24 * 30.44);
+  const xScale = (date) => !goal?.baselineDate && clean.length < 2
     ? pad.left + chartW / 2
-    : pad.left + ((new Date(date).getTime() - minDate) / dateRange) * chartW;
+    : pad.left + ((new Date(date) - startDate) / totalRangeMs) * chartW;
   const yFor = (v) => pad.top + chartH - ((v - min) / range) * chartH;
-  const dataPath = clean.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xForDate(p.date).toFixed(1)} ${yFor(p.value).toFixed(1)}`).join(' ');
+  const dataPath = clean.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.date).toFixed(1)} ${yFor(p.value).toFixed(1)}`).join(' ');
   const trend = clean.length >= 3 ? calcTrendLine(clean) : null;
-  const trendPath = trend ? `M ${xForDate(clean[0].date).toFixed(1)} ${yFor(trend.intercept).toFixed(1)} L ${xForDate(clean[clean.length - 1].date).toFixed(1)} ${yFor(trend.intercept + trend.slope * (clean.length - 1)).toFixed(1)}` : '';
+  const trendPath = trend ? `M ${xScale(clean[0].date).toFixed(1)} ${yFor(trend.intercept).toFixed(1)} L ${xScale(clean[clean.length - 1].date).toFixed(1)} ${yFor(trend.intercept + trend.slope * (clean.length - 1)).toFixed(1)}` : '';
   const optimalY1 = optimal ? yFor(optimal.max) : 0;
   const optimalY2 = optimal ? yFor(optimal.min) : 0;
   const goalPace = goal ? paceLabel(goal.current, goal.expectedNow, goal.better) : null;
@@ -2166,27 +2167,16 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const delta = first && last ? ((last.value - first.value) / first.value) * 100 : 0;
   const rangeText = first && last ? formatRangeText(first.date, last.date) : '';
   const avgVal = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-  const pointFirstDate = first ? new Date(first.date) : null;
-  const pointLastDate = last ? new Date(last.date) : null;
-  const totalRangeMonths = pointFirstDate && pointLastDate ? (pointLastDate - pointFirstDate) / (1000 * 60 * 60 * 24 * 30.44) : 0;
-  const pointDateValues = clean.map(p => new Date(p.date).getTime()).filter(Number.isFinite);
-  const pointMinDate = pointDateValues.length ? Math.min(...pointDateValues) : 0;
-  const pointMaxDate = pointDateValues.length ? Math.max(...pointDateValues) : 1;
-  const pointDateRange = pointMaxDate - pointMinDate || 1;
-  const xForXLabel = (date) => pointDateValues.length < 2 || pointMaxDate === pointMinDate
-    ? pad.left + chartW / 2
-    : pad.left + ((new Date(date).getTime() - pointMinDate) / pointDateRange) * chartW;
   const allPointsSameDay = clean.length > 1 && clean.every(p => chartDayKey(p.date) === chartDayKey(first.date));
-  const rawXLabels = clean.length === 1
+  const rawXLabels = clean.length === 1 && !goal?.baselineDate
     ? [{ idx: 0, x: pad.left + chartW / 2, label: formatFullXLabel(first.date), centered: true }]
-    : allPointsSameDay
+    : allPointsSameDay && !goal?.baselineDate
     ? [{ idx: 0, x: pad.left + chartW / 2, label: 'Oggi', centered: true }]
-    : pickXLabels(clean)
-      .filter((idx, i, picked) => picked.indexOf(idx) === i)
-      .map(idx => ({
+    : pickXLabelsTimeRange(startDate, endDate, 4)
+      .map((date, idx) => ({
         idx,
-        x: xForXLabel(clean[idx].date),
-        label: clean.length === 1 ? formatFullXLabel(clean[idx].date) : formatXLabel(clean[idx].date, totalRangeMonths)
+        x: xScale(date),
+        label: formatXLabel(date, totalRangeMonths)
       }));
   const labels = rawXLabels.slice().sort((a, b) => a.x - b.x);
   const filteredLabels = labels.reduce((filtered, current, i) => {
@@ -2222,7 +2212,7 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
           {goal?.t6 != null && (
             <>
               <line x1={pad.left} y1={yFor(goal.t6)} x2={pad.left + chartW} y2={yFor(goal.t6)} stroke="#10b981" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.7" />
-              <text x={pad.left + chartW} y={yFor(goal.t6) - 6} fill="#10b981" fontSize="10" textAnchor="end">Target T+6m: {fmtNumber(goal.t6)}</text>
+              <text x={targetEndDate ? xScale(targetEndDate) : pad.left + chartW} y={yFor(goal.t6) - 6} fill="#10b981" fontSize="10" textAnchor="end">Target T+6m: {fmtNumber(goal.t6)}</text>
             </>
           )}
           {goal?.baseline != null && (
@@ -2231,14 +2221,18 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
               <text x={pad.left + 4} y={yFor(goal.baseline) - 4} fill="rgba(255,255,255,0.5)" fontSize="9">Baseline: {fmtNumber(goal.baseline)}</text>
             </>
           )}
-          {goal?.baseline != null && goal?.t6 != null && goal?.baselineDate && expectedEndDate && (
-            <line x1={xForDate(goal.baselineDate)} y1={yFor(goal.baseline)} x2={xForDate(expectedEndDate)} y2={yFor(goal.t6)} stroke="#10b981" strokeWidth="1" strokeDasharray="2 4" opacity="0.5" />
+          {goal?.baseline != null && goal?.t6 != null && goal?.baselineDate && targetEndDate && (
+            <>
+              <line x1={xScale(goal.baselineDate)} y1={yFor(goal.baseline)} x2={xScale(targetEndDate)} y2={yFor(goal.t6)} stroke="#10b981" strokeWidth="1" strokeDasharray="2 4" opacity="0.5" />
+              <circle cx={xScale(targetEndDate)} cy={yFor(goal.t6)} r="4" fill="#10b981" />
+            </>
           )}
           {clean.length >= 2 && <path d={dataPath} fill="none" stroke={metric.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />}
-          {clean.length === 1 && <circle cx={xForDate(clean[0].date)} cy={yFor(clean[0].value)} r="4" fill={metric.color} />}
+          {clean.length === 1 && <circle cx={xScale(clean[0].date)} cy={yFor(clean[0].value)} r="4" fill={metric.color} />}
           {clean.map((p, i) => (
             <React.Fragment key={`${p.date}-${i}`}>
-              <circle cx={xForDate(p.date)} cy={yFor(p.value)} r="3.5" fill="#151515" stroke={metric.color} strokeWidth="2" />
+              {i === clean.length - 1 && <circle cx={xScale(p.date)} cy={yFor(p.value)} r="6" fill="none" stroke={metric.color} strokeWidth="1" opacity="0.5" />}
+              <circle cx={xScale(p.date)} cy={yFor(p.value)} r="3.5" fill="#151515" stroke={metric.color} strokeWidth="2" />
             </React.Fragment>
           ))}
           {xLabels.map((xLabel, i) => (
