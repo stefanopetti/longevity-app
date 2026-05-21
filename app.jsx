@@ -2076,6 +2076,32 @@ const calcTrendLine = (points) => {
   return { slope, intercept };
 };
 
+const CHART_MONTHS_IT = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+
+const formatXLabel = (date, totalRangeMonths) => {
+  const d = new Date(date);
+  const yy = String(d.getFullYear()).slice(-2);
+  const mm = CHART_MONTHS_IT[d.getMonth()];
+  const dd = d.getDate();
+  if (totalRangeMonths < 1) return `${dd} ${mm}`;
+  return `${mm} ${yy}`;
+};
+
+const formatFullXLabel = (date) => {
+  const d = new Date(date);
+  return `${d.getDate()} ${CHART_MONTHS_IT[d.getMonth()]} ${d.getFullYear()}`;
+};
+
+const pickXLabels = (points) => {
+  const n = points.length;
+  if (n === 0) return [];
+  if (n === 1) return [0];
+  if (n === 2) return [0, 1];
+  if (n <= 5) return [0, Math.floor(n / 2), n - 1];
+  if (n <= 11) return [0, Math.floor(n / 3), Math.floor((2 * n) / 3), n - 1];
+  return [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4), n - 1];
+};
+
 const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose }) => {
   const clean = (points || []).map(p => ({ ...p, value: parseDecimal(p.value) })).filter(p => p.value).sort((a, b) => new Date(a.date) - new Date(b.date));
   if (!metric) return null;
@@ -2117,7 +2143,33 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const delta = first && last ? ((last.value - first.value) / first.value) * 100 : 0;
   const months = first && last ? Math.max(0, Math.round((new Date(last.date) - new Date(first.date)) / (1000 * 60 * 60 * 24 * 30))) : 0;
   const avgVal = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-  const labelEvery = clean.length > 8 ? 3 : clean.length > 4 ? 2 : 1;
+  const pointFirstDate = first ? new Date(first.date) : null;
+  const pointLastDate = last ? new Date(last.date) : null;
+  const totalRangeMonths = pointFirstDate && pointLastDate ? (pointLastDate - pointFirstDate) / (1000 * 60 * 60 * 24 * 30.44) : 0;
+  const allPointsSameDay = clean.length > 1 && clean.every(p => p.date === first.date);
+  const rawXLabels = clean.length === 1
+    ? [{ idx: 0, x: pad.left + chartW / 2, label: formatFullXLabel(first.date), centered: true }]
+    : allPointsSameDay
+    ? [{ idx: 0, x: pad.left + chartW / 2, label: 'Oggi', centered: true }]
+    : pickXLabels(clean)
+      .filter((idx, i, picked) => picked.indexOf(idx) === i)
+      .map(idx => ({
+        idx,
+        x: xForDate(clean[idx].date),
+        label: clean.length === 1 ? formatFullXLabel(clean[idx].date) : formatXLabel(clean[idx].date, totalRangeMonths)
+      }));
+  const xLabels = rawXLabels.reduce((filtered, current, i) => {
+    if (i === 0 || i === rawXLabels.length - 1) {
+      filtered.push(current);
+      return filtered;
+    }
+    const previous = filtered[filtered.length - 1];
+    const next = rawXLabels[i + 1];
+    const previousDistance = Math.max(50, (Math.max(previous.label.length, current.label.length) * 6) + 8);
+    const nextDistance = Math.max(50, (Math.max(next.label.length, current.label.length) * 6) + 8);
+    if (current.x - previous.x >= previousDistance && next.x - current.x >= nextDistance) filtered.push(current);
+    return filtered;
+  }, []);
 
   return (
     <div onClick={onClose} style={{ ...modalOverlayStyle, backgroundColor: 'rgba(0,0,0,0.86)', zIndex: 120 }}>
@@ -2156,12 +2208,19 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
           {clean.map((p, i) => (
             <React.Fragment key={`${p.date}-${i}`}>
               <circle cx={xForDate(p.date)} cy={yFor(p.value)} r="3.5" fill="#151515" stroke={metric.color} strokeWidth="2" />
-              {(i % labelEvery === 0 || i === clean.length - 1) && (
-                <text x={xForDate(p.date)} y={height - 8} textAnchor="middle" fontSize="9" fill="rgba(255,255,255,0.4)">
-                  {new Date(p.date).toLocaleDateString('it-IT', { month: 'short', year: '2-digit' })}
-                </text>
-              )}
             </React.Fragment>
+          ))}
+          {xLabels.map((xLabel, i) => (
+            <text
+              key={`${xLabel.idx}-${xLabel.label}`}
+              x={xLabel.x}
+              y={height - 8}
+              textAnchor={xLabel.centered ? 'middle' : i === 0 ? 'start' : i === xLabels.length - 1 ? 'end' : 'middle'}
+              fontSize="10"
+              fill="rgba(255,255,255,0.5)"
+            >
+              {xLabel.label}
+            </text>
           ))}
           {trend && <path d={trendPath} fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="1.8" strokeDasharray="5 4" strokeLinecap="round" />}
         </svg>
