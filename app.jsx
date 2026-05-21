@@ -1903,24 +1903,116 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
 const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss }) => {
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(task.structure[0].duration);
+  const [phaseStartTime, setPhaseStartTime] = useState(null);
+  const [pausedAt, setPausedAt] = useState(null);
+  const [accumulatedPause, setAccumulatedPause] = useState(0);
   const [running, setRunning] = useState(false);
   const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
+  const [backgroundAlertOpen, setBackgroundAlertOpen] = useState(false);
+  const [backgroundAlertData, setBackgroundAlertData] = useState(null);
+  const [backgroundEndModalOpen, setBackgroundEndModalOpen] = useState(false);
   const [hrAvg, setHrAvg] = useState('');
   const [feeling, setFeeling] = useState(5);
   const tickRef = useRef(null);
+  const advancingRef = useRef(false);
   const currentPhase = task.structure[phaseIdx];
 
-  useEffect(() => {
-    if (running && secondsLeft > 0) tickRef.current = setTimeout(() => setSecondsLeft(s => s - 1), 1000);
-    else if (running && secondsLeft === 0) {
-      if (phaseIdx < task.structure.length - 1) {
-        const ni = phaseIdx + 1; const next = task.structure[ni];
-        if (next.intense) alertIntense(); else alertEnd();
-        setPhaseIdx(ni); setSecondsLeft(next.duration);
-      } else { alertEnd(); setRunning(false); }
+  const computeSecondsLeft = () => {
+    if (!phaseStartTime) return task.structure[phaseIdx].duration;
+    const now = Date.now();
+    const effectiveStart = phaseStartTime + accumulatedPause;
+    const elapsed = pausedAt
+      ? Math.floor((pausedAt - effectiveStart) / 1000)
+      : Math.floor((now - effectiveStart) / 1000);
+    return Math.max(0, task.structure[phaseIdx].duration - elapsed);
+  };
+  const startPhaseTimer = (startTime = Date.now()) => {
+    setPhaseStartTime(startTime);
+    setAccumulatedPause(0);
+    setPausedAt(null);
+  };
+  const advancePhase = () => {
+    if (advancingRef.current) return;
+    advancingRef.current = true;
+
+    if (phaseIdx < task.structure.length - 1) {
+      const ni = phaseIdx + 1;
+      const next = task.structure[ni];
+      if (next.intense) alertIntense(); else alertEnd();
+      setPhaseIdx(ni);
+      setSecondsLeft(next.duration);
+      startPhaseTimer();
+    } else {
+      alertEnd();
+      setRunning(false);
     }
-    return () => clearTimeout(tickRef.current);
-  }, [running, secondsLeft, phaseIdx]);
+
+    setTimeout(() => { advancingRef.current = false; }, 50);
+  };
+
+  useEffect(() => {
+    if (!running) return undefined;
+    const refreshCountdown = () => {
+      const nextSecondsLeft = computeSecondsLeft();
+      setSecondsLeft(nextSecondsLeft);
+      if (nextSecondsLeft === 0) advancePhase();
+    };
+    refreshCountdown();
+    tickRef.current = setInterval(refreshCountdown, 1000);
+    return () => clearInterval(tickRef.current);
+  }, [running, phaseStartTime, pausedAt, accumulatedPause, phaseIdx]);
+
+  useEffect(() => {
+    if (!running || !phaseStartTime) return undefined;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (advancingRef.current) return;
+
+      const now = Date.now();
+      const effectiveStart = phaseStartTime + accumulatedPause;
+      const elapsedInPhase = Math.floor((now - effectiveStart) / 1000);
+      const currentPhaseDuration = task.structure[phaseIdx].duration;
+
+      if (elapsedInPhase <= currentPhaseDuration) {
+        setSecondsLeft(currentPhaseDuration - elapsedInPhase);
+        return;
+      }
+
+      let overflowSeconds = elapsedInPhase - currentPhaseDuration;
+      let targetPhaseIdx = phaseIdx + 1;
+      let remainingInTargetPhase = 0;
+
+      while (targetPhaseIdx < task.structure.length) {
+        const dur = task.structure[targetPhaseIdx].duration;
+        if (overflowSeconds < dur) {
+          remainingInTargetPhase = dur - overflowSeconds;
+          break;
+        }
+        overflowSeconds -= dur;
+        targetPhaseIdx++;
+      }
+
+      if (targetPhaseIdx >= task.structure.length) {
+        setRunning(false);
+        setBackgroundEndModalOpen(true);
+        return;
+      }
+
+      setBackgroundAlertData({
+        phasesLost: targetPhaseIdx - phaseIdx,
+        currentPhaseName: task.structure[phaseIdx].phase,
+        targetPhaseIdx,
+        targetPhaseName: task.structure[targetPhaseIdx].phase,
+        remainingInTargetPhase
+      });
+      setBackgroundAlertOpen(true);
+      setRunning(false);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [running, phaseStartTime, phaseIdx, accumulatedPause, task.structure]);
 
   const saveSession = async () => {
     const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, hrAvg, feeling, type: task.type };
@@ -1930,11 +2022,34 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
   const handleEndSession = async () => {
     await saveSession();
   };
+  const handlePause = () => {
+    if (running) {
+      const nextPausedAt = Date.now();
+      setPausedAt(nextPausedAt);
+      setSecondsLeft(computeSecondsLeft());
+      setRunning(false);
+      return;
+    }
+    if (!phaseStartTime) {
+      startPhaseTimer();
+    } else if (pausedAt) {
+      setAccumulatedPause(prev => prev + (Date.now() - pausedAt));
+      setPausedAt(null);
+    }
+    setRunning(true);
+  };
   const skipPhase = () => {
     if (phaseIdx < task.structure.length - 1) {
       const ni = phaseIdx + 1;
       setPhaseIdx(ni);
       setSecondsLeft(task.structure[ni].duration);
+      if (running) {
+        startPhaseTimer();
+      } else {
+        setPhaseStartTime(null);
+        setAccumulatedPause(0);
+        setPausedAt(null);
+      }
     }
   };
   const handleSkipRequest = () => {
@@ -1985,7 +2100,7 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-          <TouchablePress onClick={() => { haptic('light'); setRunning(r => !r); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
+          <TouchablePress onClick={() => { haptic('light'); handlePause(); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
             {running ? <><Pause size={20} fill="currentColor" /> Pausa</> : <><Play size={20} fill="currentColor" /> Avvia</>}
           </TouchablePress>
           <button onClick={handleSkipRequest} style={{ ...btnSecondary, padding: 16 }}>Salta fase →</button>
@@ -2018,6 +2133,55 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
           cancelLabel="Annulla"
           onConfirm={() => { skipPhase(); setSkipConfirmOpen(false); }}
           onCancel={() => setSkipConfirmOpen(false)}
+        />
+      )}
+      {backgroundAlertOpen && backgroundAlertData && (
+        <ConfirmModal
+          title="Sessione interrotta"
+          body={`Sei stato in background. Hai perso ${backgroundAlertData.phasesLost} fase/i del protocollo. La fase reale ora sarebbe "${backgroundAlertData.targetPhaseName}". Vuoi riprendere da lì o restare su questa fase?`}
+          confirmLabel={`Riprendi da ${backgroundAlertData.targetPhaseName}`}
+          cancelLabel="Resta su questa fase"
+          onConfirm={() => {
+            const targetIdx = backgroundAlertData.targetPhaseIdx;
+            const remaining = backgroundAlertData.remainingInTargetPhase;
+            const targetDuration = task.structure[targetIdx].duration;
+
+            setPhaseIdx(targetIdx);
+            setSecondsLeft(remaining);
+            setPhaseStartTime(Date.now() - (targetDuration - remaining) * 1000);
+            setAccumulatedPause(0);
+            setPausedAt(null);
+
+            setBackgroundAlertOpen(false);
+            setBackgroundAlertData(null);
+            setRunning(true);
+          }}
+          onCancel={() => {
+            setPhaseStartTime(Date.now());
+            setAccumulatedPause(0);
+            setPausedAt(null);
+            setSecondsLeft(task.structure[phaseIdx].duration);
+
+            setBackgroundAlertOpen(false);
+            setBackgroundAlertData(null);
+            setRunning(true);
+          }}
+        />
+      )}
+      {backgroundEndModalOpen && (
+        <ConfirmModal
+          title="Sessione terminata"
+          body="Sei stato in background fino al termine della sessione. Vuoi salvare?"
+          confirmLabel="Salva sessione"
+          cancelLabel="Scarta"
+          onConfirm={async () => {
+            setBackgroundEndModalOpen(false);
+            await saveSession();
+          }}
+          onCancel={() => {
+            setBackgroundEndModalOpen(false);
+            onExit();
+          }}
         />
       )}
     </div>
