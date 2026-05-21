@@ -120,6 +120,10 @@ const GLOSSARY = {
     title: 'FC max — Frequenza Cardiaca Massima',
     body: 'Battiti massimi raggiungibili al minuto.\n\nStima: 220 - età. Per te (53 anni) = 167 bpm.\n\nServe per calcolare le zone di intensità cardio.'
   },
+  'FCmax stimata': {
+    title: 'FCmax stimata da età',
+    body: 'Il valore di frequenza cardiaca massima mostrato è una stima ottenuta con la formula 220 - età, perché non hai ancora inserito un hrMax misurato nel tuo profilo. La formula ha un errore standard di ±10-12 bpm, quindi il tuo hrMax reale può essere significativamente diverso. Per dati accurati, misura la tua FC massima reale con un test all-out (es. ramp test su cyclette/tapis roulant sotto supervisione) e aggiornala nel profilo.'
+  },
   Zone2: {
     title: 'Zone 2 Cardio',
     body: 'Cardio a bassa intensità: 60-70% FC max (105-125 bpm per te).\n\nDevi poter parlare, ma con un po\' di fatica.\n\nCostruisce base aerobica e densità mitocondriale. Allena il cuore senza stress.'
@@ -232,14 +236,14 @@ const TASKS = {
     suggestedDay: 4, color: '#ef4444',
     structure: [
       { phase: 'Warm-up', duration: 720, target: 'Riscaldamento progressivo' },
-      { phase: 'Round 1 - ON', duration: 240, target: '85-95% FC max', intense: true },
-      { phase: 'Round 1 - Recovery', duration: 180, target: '60-70% FC max' },
-      { phase: 'Round 2 - ON', duration: 240, target: '85-95% FC max', intense: true },
-      { phase: 'Round 2 - Recovery', duration: 180, target: '60-70% FC max' },
-      { phase: 'Round 3 - ON', duration: 240, target: '85-95% FC max', intense: true },
-      { phase: 'Round 3 - Recovery', duration: 180, target: '60-70% FC max' },
-      { phase: 'Round 4 - ON', duration: 240, target: '85-95% FC max', intense: true },
-      { phase: 'Round 4 - Recovery', duration: 180, target: '60-70% FC max' },
+      { phase: 'Round 1 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
+      { phase: 'Round 1 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
+      { phase: 'Round 2 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
+      { phase: 'Round 2 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
+      { phase: 'Round 3 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
+      { phase: 'Round 3 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
+      { phase: 'Round 4 - ON', duration: 240, target: '85-95% FC max', intense: true, bpmRange: [85, 95] },
+      { phase: 'Round 4 - Recovery', duration: 180, target: '60-70% FC max', bpmRange: [60, 70] },
       { phase: 'Cool-down', duration: 600, target: 'Defaticamento' },
       { phase: 'Stretching', duration: 600, target: 'Allungamento' }
     ]
@@ -456,6 +460,21 @@ const calcAge = (birthDate) => {
   const m = today.getMonth() - birth.getMonth();
   if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
   return age;
+};
+
+const getEffectiveHrMax = (profile) => {
+  if (profile?.hrMax && profile.hrMax > 0) return { value: profile.hrMax, estimated: false };
+  const age = calcAge(profile?.birthDate);
+  if (age !== null) return { value: 220 - age, estimated: true };
+  return { value: null, estimated: false };
+};
+
+const calcBpmRange = (minPct, maxPct, hrMax) => {
+  if (!hrMax) return null;
+  return {
+    min: Math.round(hrMax * minPct / 100),
+    max: Math.round(hrMax * maxPct / 100)
+  };
 };
 
 const migrateProfile = (old) => {
@@ -1063,6 +1082,25 @@ const InfoButton = ({ glossKey, onClick }) => (
   </button>
 );
 
+const HrRangeDisplay = ({ minPct, maxPct, label: rangeLabel, profile, onGloss, compact }) => {
+  const { value: hrMax, estimated } = getEffectiveHrMax(profile);
+  const bpm = calcBpmRange(minPct, maxPct, hrMax);
+
+  return (
+    <div style={{ fontSize: compact ? 13 : 14, color: '#fff' }}>
+      {rangeLabel && <span style={{ fontWeight: 600 }}>{rangeLabel}: </span>}
+      <span>{minPct}-{maxPct}% FCmax</span>
+      {bpm && (
+        <>
+          <span> → </span>
+          <span style={{ fontWeight: 600 }}>{bpm.min}-{bpm.max} bpm</span>
+          {estimated && <InfoButton glossKey="FCmax stimata" onClick={onGloss} />}
+        </>
+      )}
+    </div>
+  );
+};
+
 const GlossaryModal = ({ termKey, onClose }) => {
   if (!termKey || !GLOSSARY[termKey]) return null;
   const g = GLOSSARY[termKey];
@@ -1248,7 +1286,7 @@ function LongevityAppV4() {
   if (!loaded) return <div style={{ ...APP_STYLE, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: FS['2xl'] }}>Caricamento...</div>;
   if (currentTask) return (
     <>
-      <TaskScreen task={TASKS[currentTask]} history={history} saveHistory={saveHistory} todayCheckin={todayCheckin} onExit={() => setCurrentTask(null)} onGloss={setGlossOpen} />
+      <TaskScreen task={TASKS[currentTask]} history={history} saveHistory={saveHistory} todayCheckin={todayCheckin} profile={profile} onExit={() => setCurrentTask(null)} onGloss={setGlossOpen} />
       <GlossaryModal termKey={glossOpen} onClose={() => setGlossOpen(null)} />
     </>
   );
@@ -1264,7 +1302,7 @@ function LongevityAppV4() {
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: pageBottomPadding }}>
       <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: `${pageTopPadding} 16px 0` }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
-        {tab === 'tasks' && <TasksTab history={history} onStart={(id) => setCurrentTask(id)} />}
+        {tab === 'tasks' && <TasksTab history={history} profile={profile} onGloss={setGlossOpen} onStart={(id) => setCurrentTask(id)} />}
         {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} setTab={setTab} />}
         {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} profile={profile} setTab={setTab} />}
         {tab === 'profile' && <ProfileTab profile={profile} saveProfile={saveProfile} measurements={measurements} onReport={() => setShowReport(true)} onReset={() => setShowReset(true)} onExport={exportData} onImport={importData} onGloss={setGlossOpen} />}
@@ -1496,7 +1534,7 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
 };
 
 // ============ TASKS TAB ============
-const TasksTab = ({ history, onStart }) => {
+const TasksTab = ({ history, profile, onGloss, onStart }) => {
   const wk = weekKey();
   const doneThisWeek = (history.workouts || []).filter(w => weekKey(new Date(w.date)) === wk).map(w => w.taskId);
   const standardTasks = Object.values(TASKS).filter(t => !t.travel);
@@ -1517,6 +1555,12 @@ const TasksTab = ({ history, onStart }) => {
             <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
               {t.travel ? 'Quando sei in viaggio / senza palestra' : `Suggerita: ${DAYS_IT[t.suggestedDay]}`} · {t.type === 'strength' ? `${t.exercises.length} esercizi` : t.type === 'movement' ? 'Mobilità + equilibrio' : t.type === 'travelCardio' ? 'Camminata o Tabata' : `${Math.round(t.structure.reduce((a, p) => a + p.duration, 0) / 60)} min`}
             </div>
+            {t.id === 'norwegian' && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <HrRangeDisplay minPct={85} maxPct={95} label="Hard" profile={profile} onGloss={onGloss} compact />
+                <HrRangeDisplay minPct={60} maxPct={70} label="Recovery" profile={profile} onGloss={onGloss} compact />
+              </div>
+            )}
             {lastDone && <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Ultima: {new Date(lastDone.date).toLocaleDateString('it-IT')}</div>}
           </div>
           <Play size={24} color={t.color} fill={t.color} />
@@ -1547,11 +1591,11 @@ const TasksTab = ({ history, onStart }) => {
 };
 
 // ============ TASK ROUTER ============
-const TaskScreen = ({ task, history, saveHistory, todayCheckin, onExit, onGloss }) => {
+const TaskScreen = ({ task, history, saveHistory, todayCheckin, profile, onExit, onGloss }) => {
   if (task.type === 'strength') return <StrengthSession task={task} history={history} saveHistory={saveHistory} todayCheckin={todayCheckin} onExit={onExit} onGloss={onGloss} />;
   if (task.type === 'movement') return <MovementSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} />;
   if (task.type === 'travelCardio') return <TravelCardioSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} />;
-  return <CardioSession task={task} history={history} saveHistory={saveHistory} onExit={onExit} onGloss={onGloss} />;
+  return <CardioSession task={task} history={history} saveHistory={saveHistory} profile={profile} onExit={onExit} onGloss={onGloss} />;
 };
 
 // ============ STRENGTH (con last perf + RIR + double progression) ============
@@ -1842,7 +1886,7 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
 };
 
 // ============ CARDIO ============
-const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
+const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss }) => {
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(task.structure[0].duration);
   const [running, setRunning] = useState(false);
@@ -1894,6 +1938,11 @@ const CardioSession = ({ task, history, saveHistory, onExit, onGloss }) => {
           <div style={{ fontSize: FS.sm, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 12, color: currentPhase.intense ? '#f87171' : 'rgba(255,255,255,0.55)' }}>{currentPhase.phase}</div>
           <div style={{ fontFamily: FONT_MONO, fontSize: FS['8xl'], fontWeight: 200, letterSpacing: '-0.05em', lineHeight: 1, color: currentPhase.intense ? '#f87171' : '#84cc16' }}>{fmtTime(secondsLeft)}</div>
           <div style={{ fontSize: FS.base, color: 'rgba(255,255,255,0.82)', marginTop: 16, lineHeight: 1.4 }}>{currentPhase.target}</div>
+          {task.id === 'norwegian' && currentPhase.bpmRange && (
+            <div style={{ marginTop: 6 }}>
+              <HrRangeDisplay minPct={currentPhase.bpmRange[0]} maxPct={currentPhase.bpmRange[1]} profile={profile} onGloss={onGloss} />
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
