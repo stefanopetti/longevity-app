@@ -2092,6 +2092,29 @@ const formatFullXLabel = (date) => {
   return `${d.getDate()} ${CHART_MONTHS_IT[d.getMonth()]} ${d.getFullYear()}`;
 };
 
+const chartDayKey = (date) => {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+
+const estimateLabelWidth = (text) => text.length * 6;
+
+const formatRangeText = (firstDate, lastDate) => {
+  const f = new Date(firstDate);
+  const l = new Date(lastDate);
+  const diffMs = l - f;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30.44);
+  if (diffDays === 0) return 'stesso giorno';
+  if (diffDays === 1) return '1 giorno';
+  if (diffDays < 30) return `${diffDays} giorni`;
+  if (diffMonths < 1.5) return '1 mese';
+  if (diffMonths < 12) return `${Math.round(diffMonths)} mesi`;
+  const years = diffMonths / 12;
+  if (years < 1.5) return '1 anno';
+  return `${Math.round(years * 10) / 10} anni`;
+};
+
 const pickXLabels = (points) => {
   const n = points.length;
   if (n === 0) return [];
@@ -2141,12 +2164,19 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
   const first = clean[0];
   const last = clean[clean.length - 1];
   const delta = first && last ? ((last.value - first.value) / first.value) * 100 : 0;
-  const months = first && last ? Math.max(0, Math.round((new Date(last.date) - new Date(first.date)) / (1000 * 60 * 60 * 24 * 30))) : 0;
+  const rangeText = first && last ? formatRangeText(first.date, last.date) : '';
   const avgVal = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
   const pointFirstDate = first ? new Date(first.date) : null;
   const pointLastDate = last ? new Date(last.date) : null;
   const totalRangeMonths = pointFirstDate && pointLastDate ? (pointLastDate - pointFirstDate) / (1000 * 60 * 60 * 24 * 30.44) : 0;
-  const allPointsSameDay = clean.length > 1 && clean.every(p => p.date === first.date);
+  const pointDateValues = clean.map(p => new Date(p.date).getTime()).filter(Number.isFinite);
+  const pointMinDate = pointDateValues.length ? Math.min(...pointDateValues) : 0;
+  const pointMaxDate = pointDateValues.length ? Math.max(...pointDateValues) : 1;
+  const pointDateRange = pointMaxDate - pointMinDate || 1;
+  const xForXLabel = (date) => pointDateValues.length < 2 || pointMaxDate === pointMinDate
+    ? pad.left + chartW / 2
+    : pad.left + ((new Date(date).getTime() - pointMinDate) / pointDateRange) * chartW;
+  const allPointsSameDay = clean.length > 1 && clean.every(p => chartDayKey(p.date) === chartDayKey(first.date));
   const rawXLabels = clean.length === 1
     ? [{ idx: 0, x: pad.left + chartW / 2, label: formatFullXLabel(first.date), centered: true }]
     : allPointsSameDay
@@ -2155,21 +2185,22 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
       .filter((idx, i, picked) => picked.indexOf(idx) === i)
       .map(idx => ({
         idx,
-        x: xForDate(clean[idx].date),
+        x: xForXLabel(clean[idx].date),
         label: clean.length === 1 ? formatFullXLabel(clean[idx].date) : formatXLabel(clean[idx].date, totalRangeMonths)
       }));
-  const xLabels = rawXLabels.reduce((filtered, current, i) => {
-    if (i === 0 || i === rawXLabels.length - 1) {
+  const labels = rawXLabels.slice().sort((a, b) => a.x - b.x);
+  const filteredLabels = labels.reduce((filtered, current, i) => {
+    if (filtered.length === 0) {
       filtered.push(current);
       return filtered;
     }
     const previous = filtered[filtered.length - 1];
-    const next = rawXLabels[i + 1];
-    const previousDistance = Math.max(50, (Math.max(previous.label.length, current.label.length) * 6) + 8);
-    const nextDistance = Math.max(50, (Math.max(next.label.length, current.label.length) * 6) + 8);
-    if (current.x - previous.x >= previousDistance && next.x - current.x >= nextDistance) filtered.push(current);
+    const minGap = (estimateLabelWidth(current.label) + estimateLabelWidth(previous.label)) / 2 + 12;
+    if (current.x - previous.x >= minGap) filtered.push(current);
+    else if (i === labels.length - 1) filtered[filtered.length - 1] = current;
     return filtered;
   }, []);
+  const xLabels = filteredLabels.slice().sort((a, b) => a.x - b.x);
 
   return (
     <div onClick={onClose} style={{ ...modalOverlayStyle, backgroundColor: 'rgba(0,0,0,0.86)', zIndex: 120 }}>
@@ -2227,8 +2258,16 @@ const FullChartModal = ({ metric, points, profile, measurements, setTab, onClose
 
         {clean.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14, fontSize: FS.xs, color: 'rgba(255,255,255,0.68)', lineHeight: 1.45 }}>
-            <div>Primo valore: {fmtNumber(first.value)} · Ultimo: {fmtNumber(last.value)}</div>
-            <div>Variazione: {delta > 0 ? '+' : ''}{delta.toFixed(1)}% in {months} mesi</div>
+            {clean.length === 1 ? (
+              <div>Valore corrente: {fmtNumber(last.value)}</div>
+            ) : (
+              <div>Primo valore: {fmtNumber(first.value)} · Ultimo: {fmtNumber(last.value)}</div>
+            )}
+            {rangeText === 'stesso giorno' ? (
+              <div>{clean.length === 1 ? '1 misurazione oggi' : `${clean.length} misurazioni oggi`}</div>
+            ) : (
+              <div>Variazione: {delta > 0 ? '+' : ''}{delta.toFixed(1)}% in {rangeText}</div>
+            )}
             <div>Media: {fmtNumber(avgVal)} · Min: {fmtNumber(minData)} · Max: {fmtNumber(maxData)}</div>
           </div>
         ) : (
