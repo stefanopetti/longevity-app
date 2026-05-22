@@ -547,6 +547,32 @@ const scoreMetric = (metricKey, value, birthDate) => {
 
 const HEALTH_FRESHNESS_DAYS = { default: 45, sonno: 10 };
 
+// Metriche fisiche monitorate dal reminder (escluso sonno)
+const REMINDER_METRICS = [
+  { key: 'vo2max', label: 'VO2max' },
+  { key: 'hrv', label: 'HRV' },
+  { key: 'hrRest', label: 'FC riposo' },
+  { key: 'grip', label: 'Forza' },
+  { key: 'bodyFat', label: '% Grasso' },
+  { key: 'visceralFat', label: 'Grasso viscerale' }
+];
+
+// Ritorna array di label delle metriche inserite ma scadute (>45gg).
+const getStaleMetrics = (measurements) => {
+  const stale = [];
+  REMINDER_METRICS.forEach(({ key, label }) => {
+    const entries = (measurements || [])
+      .filter(m => m[key] != null && m[key] !== '')
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (entries.length === 0) return;
+    const ageInDays = Math.floor((Date.now() - new Date(entries[0].date).getTime()) / (1000 * 60 * 60 * 24));
+    if (ageInDays > HEALTH_FRESHNESS_DAYS.default) {
+      stale.push(label);
+    }
+  });
+  return stale;
+};
+
 const getEffectiveHrMax = (profile) => {
   if (profile?.hrMax && profile.hrMax > 0) return { value: profile.hrMax, estimated: false };
   const age = calcAge(profile?.birthDate);
@@ -1559,7 +1585,7 @@ function LongevityAppV4() {
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: pageBottomPadding }}>
       <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: `${pageTopPadding} 16px 0` }}>
-        {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
+        {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} measurements={measurements} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} onNavigateToMeasures={() => setTab('measures')} dailyLogs={dailyLogs} />}
         {tab === 'tasks' && <TasksTab history={history} saveHistory={saveHistory} profile={profile} onGloss={setGlossOpen} onStart={(id) => setCurrentTask(id)} />}
         {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} setTab={setTab} />}
         {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} profile={profile} setTab={setTab} />}
@@ -1673,7 +1699,7 @@ const HealthRing = ({ score, components, onGloss }) => {
 };
 
 // ============ HOME ============
-const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn, onStartTask, onReport, onGloss, dailyLogs }) => {
+const HomeTab = ({ profile, health, streak, history, measurements, todayCheckInDone, onCheckIn, onStartTask, onReport, onGloss, onNavigateToMeasures, dailyLogs }) => {
   const wk = weekKey();
   const doneThisWeek = (history.workouts || []).filter(w => weekKey(new Date(w.date)) === wk);
   const STANDARD_TASKS = ['upper', 'zone2', 'movement', 'norwegian', 'lower'];
@@ -1696,6 +1722,7 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
   const doneTodayWorkout = (history.workouts || [])
     .filter(w => sameDay(new Date(w.date), new Date()))
     .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+  const staleMetrics = getStaleMetrics(measurements);
   const ctxMsg = getContextualMessage(streak, coveredSlots.size, totalTasks, todayCheckIn, [], suggestedTaskToday);
 
   return (
@@ -1717,6 +1744,26 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
           </div>
           <ChevronUp size={22} color="#84cc16" style={{ transform: 'rotate(90deg)' }} />
         </button>
+      )}
+
+      {staleMetrics.length > 0 && (
+        <TouchablePress
+          onClick={() => onNavigateToMeasures && onNavigateToMeasures()}
+          style={{ background: 'rgba(245,158,11,0.12)', border: `1px solid ${COLORS.recovery}`, borderRadius: 14, padding: '14px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}
+        >
+          <span style={{ fontSize: 22 }}>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>
+              {staleMetrics.length === 1
+                ? `${staleMetrics[0]} da aggiornare`
+                : staleMetrics.length <= 3
+                  ? `${staleMetrics.join(', ')} da aggiornare`
+                  : `${staleMetrics.slice(0, 2).join(', ')} e altre ${staleMetrics.length - 2} da aggiornare`}
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Tocca per aggiornare le misure</div>
+          </div>
+          <span style={{ color: COLORS.textMuted }}>›</span>
+        </TouchablePress>
       )}
 
       <div style={{ ...cardLarge, background: 'linear-gradient(135deg, rgba(132,204,22,0.08), transparent)' }}>
