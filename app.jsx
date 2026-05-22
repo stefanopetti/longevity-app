@@ -52,7 +52,7 @@ const DEFAULT_PROFILE = {
   _migrated_v8: false
 };
 
-const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'vo2max', 'hrRest', 'hrv', 'grip', 'bpSys', 'bpDia'];
+const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'visceralFat', 'vo2max', 'hrRest', 'hrv', 'grip', 'bpSys', 'bpDia'];
 const BLOOD_FIELDS = [
   { key: 'hsCRP', label: 'hs-CRP', unit: 'mg/L' },
   { key: 'insulin', label: 'Insulina a digiuno', unit: 'µU/mL' },
@@ -155,6 +155,10 @@ const GLOSSARY = {
   'grip strength': {
     title: 'Forza di presa (grip strength)',
     body: 'La forza di presa è un biomarker validato dell\'invecchiamento: una riduzione di 1 deviazione standard è associata a +17% di mortalità per ogni causa, indipendentemente da età e sesso. Misurala con un dinamometro: in piedi, braccio lungo il fianco senza toccare il corpo, 3 prove per mano. Registra la media delle 3 prove della mano dominante (o la media delle due mani, mantenendo sempre lo stesso protocollo). Per uomo 50-59 anni: <30kg basso, 38-44kg buono, >50kg ottimo.'
+  },
+  'composizione corporea': {
+    title: 'Composizione corporea',
+    body: 'Conta più del peso totale: ciò che importa per la longevità è quanto grasso porti, soprattutto quello viscerale. Il grasso corporeo segue una curva a J — sia troppo (>25% per uomo) sia troppo poco (<8%) aumentano i rischi; l\'ottimale per la longevità è ~14-18% per un uomo 50-59. Il grasso viscerale (quello profondo attorno agli organi) è il più pericoloso: correla con malattie cardiovascolari, diabete e mortalità, quindi più basso è meglio. Entrambi si misurano con la bilancia a bioimpedenza. La massa muscolare viene tracciata separatamente nel pannello misure; la forza muscolare è già catturata dal driver Forza di presa.'
   },
   'suggerimento giorno': {
     title: 'Suggerimento del giorno',
@@ -490,6 +494,16 @@ const HEALTH_CURVES = {
     '50-59': [[25, 15], [33, 45], [39, 60], [44, 78], [52, 100]],
     '60-69': [[22, 15], [29, 45], [35, 60], [40, 78], [47, 100]],
     '70+': [[18, 15], [24, 45], [30, 60], [35, 78], [40, 100]]
+  },
+  bodyFat: {
+    '50-59': [[8, 60], [12, 85], [15, 100], [18, 90], [22, 60], [28, 20], [35, 0]],
+    '60-69': [[10, 60], [14, 85], [17, 100], [20, 90], [24, 60], [30, 20], [37, 0]],
+    '70+': [[11, 60], [15, 85], [18, 100], [22, 90], [26, 60], [32, 20], [38, 0]]
+  },
+  visceralFat: {
+    '50-59': [[2, 100], [6, 90], [10, 65], [13, 40], [16, 20], [20, 0]],
+    '60-69': [[2, 100], [7, 90], [11, 65], [14, 40], [17, 20], [20, 0]],
+    '70+': [[2, 100], [8, 90], [12, 65], [15, 40], [18, 20], [20, 0]]
   }
 };
 
@@ -878,10 +892,10 @@ const calcHealthScore = (history, measurements, dailyLogs, profile) => {
   };
 
   const metricDrivers = [
-    { key: 'vo2max', weight: 37 },
-    { key: 'hrv', weight: 19 },
-    { key: 'hrRest', weight: 19 },
-    { key: 'grip', weight: 15 }
+    { key: 'vo2max', weight: 30 },
+    { key: 'hrv', weight: 15 },
+    { key: 'hrRest', weight: 15 },
+    { key: 'grip', weight: 12 }
   ];
 
   metricDrivers.forEach(({ key, weight }) => {
@@ -897,6 +911,33 @@ const calcHealthScore = (history, measurements, dailyLogs, profile) => {
       ageInDays: metric.ageInDays
     });
   });
+
+  const bodyFatMetric = getLatestMetric('bodyFat');
+  const visceralMetric = getLatestMetric('visceralFat');
+  const compSubScores = [];
+  let compStale = false;
+  let compMaxAge = 0;
+
+  if (bodyFatMetric) {
+    const score = scoreMetric('bodyFat', bodyFatMetric.value, birthDate);
+    if (score !== null) {
+      compSubScores.push(score);
+      if (bodyFatMetric.ageInDays > HEALTH_FRESHNESS_DAYS.default) compStale = true;
+      compMaxAge = Math.max(compMaxAge, bodyFatMetric.ageInDays);
+    }
+  }
+  if (visceralMetric) {
+    const score = scoreMetric('visceralFat', visceralMetric.value, birthDate);
+    if (score !== null) {
+      compSubScores.push(score);
+      if (visceralMetric.ageInDays > HEALTH_FRESHNESS_DAYS.default) compStale = true;
+      compMaxAge = Math.max(compMaxAge, visceralMetric.ageInDays);
+    }
+  }
+  if (compSubScores.length > 0) {
+    const compValue = compSubScores.reduce((a, b) => a + b, 0) / compSubScores.length;
+    components.push({ key: 'composizione', value: compValue, weight: 20, stale: compStale, ageInDays: compMaxAge });
+  }
 
   const last7 = Array.from({ length: 7 }, (_, i) => daysAgo(i));
   const sleepData = last7
@@ -914,7 +955,7 @@ const calcHealthScore = (history, measurements, dailyLogs, profile) => {
       : 7;
     const qualityScore = ((avgQuality - 1) / 9) * 100;
     const sleepDriverScore = hoursScore * 0.3 + qualityScore * 0.7;
-    components.push({ key: 'sonno', value: sleepDriverScore, weight: 10, stale: false });
+    components.push({ key: 'sonno', value: sleepDriverScore, weight: 8, stale: false });
   }
 
   const totalWeight = components.reduce((a, c) => a + c.weight, 0);
@@ -1474,9 +1515,9 @@ const HealthRing = ({ score, components, onGloss }) => {
   const cx = 100, cy = 100, outerR = 80, innerR = 58, outerStroke = 14, innerStroke = 8;
   const outerCirc = 2 * Math.PI * outerR;
   const scoreColor = score === null ? 'rgba(255,255,255,0.12)' : score >= 80 ? '#84cc16' : score >= 60 ? '#fbbf24' : '#ef4444';
-  const driverColors = { vo2max: '#ef4444', hrv: '#a855f7', hrRest: '#3b82f6', grip: '#84cc16', sonno: '#6366f1' };
-  const driverIcons = { vo2max: '🫀', hrv: '💗', hrRest: '💓', grip: '✊', sonno: '😴' };
-  const driverLabels = { vo2max: 'VO2max', hrv: 'HRV', hrRest: 'FC riposo', grip: 'Forza', sonno: 'Sonno' };
+  const driverColors = { vo2max: '#ef4444', hrv: '#a855f7', hrRest: '#3b82f6', grip: '#84cc16', composizione: '#f59e0b', sonno: '#6366f1' };
+  const driverIcons = { vo2max: '🫀', hrv: '💗', hrRest: '💓', grip: '✊', composizione: '⚖️', sonno: '😴' };
+  const driverLabels = { vo2max: 'VO2max', hrv: 'HRV', hrRest: 'FC riposo', grip: 'Forza', composizione: 'Composizione', sonno: 'Sonno' };
   const segCount = components.length || 1;
   const segGap = 10, segDeg = (360 - segCount * segGap) / segCount;
   const toRad = (d) => (d * Math.PI) / 180;
@@ -3175,8 +3216,9 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss, profile
 
   const fields = [
     { key: 'weight', label: 'Peso', unit: 'kg', better: 'maintain', color: COLORS.recovery },
-    { key: 'bodyFat', label: '% Grasso', unit: '%', better: 'down', color: COLORS.recovery, optimalRange: METRIC_OPTIMAL.bodyFat },
+    { key: 'bodyFat', label: '% Grasso', unit: '%', better: 'down', glossKey: 'composizione corporea', color: COLORS.recovery, optimalRange: METRIC_OPTIMAL.bodyFat },
     { key: 'muscleMassKg', label: 'Massa muscolare', unit: 'kg', better: 'up', color: COLORS.forza },
+    { key: 'visceralFat', label: 'Grasso viscerale', unit: 'indice', better: 'down', glossKey: 'composizione corporea', color: COLORS.recovery },
     { key: 'vo2max', label: 'VO2max', unit: 'ml/kg/min', better: 'up', glossKey: 'VO2max', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.vo2max },
     { key: 'hrRest', label: 'FC riposo', unit: 'bpm', better: 'down', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.hrRest },
     { key: 'hrv', label: 'HRV', unit: 'ms', better: 'up', glossKey: 'HRV', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.hrv },
