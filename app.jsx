@@ -52,7 +52,7 @@ const DEFAULT_PROFILE = {
   _migrated_v8: false
 };
 
-const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'vo2max', 'hrRest', 'hrv', 'bpSys', 'bpDia'];
+const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'vo2max', 'hrRest', 'hrv', 'grip', 'bpSys', 'bpDia'];
 const BLOOD_FIELDS = [
   { key: 'hsCRP', label: 'hs-CRP', unit: 'mg/L' },
   { key: 'insulin', label: 'Insulina a digiuno', unit: 'µU/mL' },
@@ -152,6 +152,10 @@ const GLOSSARY = {
     title: 'Qualità del sonno',
     body: 'Oltre alle ore, conta molto come hai dormito: continuità, profondità, sensazione al risveglio. L\'evidenza scientifica mostra che l\'architettura del sonno (fasi REM e profondo) ha impatto maggiore della sola durata. Per questo l\'Indice Salute pesa la qualità al 70% e le ore al 30% nel driver sonno.'
   },
+  'grip strength': {
+    title: 'Forza di presa (grip strength)',
+    body: 'La forza di presa è un biomarker validato dell\'invecchiamento: una riduzione di 1 deviazione standard è associata a +17% di mortalità per ogni causa, indipendentemente da età e sesso. Misurala con un dinamometro: in piedi, braccio lungo il fianco senza toccare il corpo, 3 prove per mano. Registra la media delle 3 prove della mano dominante (o la media delle due mani, mantenendo sempre lo stesso protocollo). Per uomo 50-59 anni: <30kg basso, 38-44kg buono, >50kg ottimo.'
+  },
   'suggerimento giorno': {
     title: 'Suggerimento del giorno',
     body: 'L\'app analizza ogni giorno il tuo recovery (energia/soreness), il bilanciamento dei carichi degli ultimi giorni e le sessioni saltate nella settimana, e ti suggerisce la task più adatta. La programmazione settimanale fissa (Upper Lun, Zone2 Mar, ecc.) resta il riferimento di base — il suggerimento la integra solo quando serve.'
@@ -173,8 +177,8 @@ const GLOSSARY = {
     body: '1) SUGGERIMENTO GIORNALIERO\nGuarda giorno della settimana, cosa hai già fatto, e recovery dal check-in.\n\n2) SUGGERIMENTO CARICHI (Double Progression)\nPer ogni esercizio, dopo l\'ultima sessione:\n• Top range + RIR≥2 su tutte le serie → +2,5kg, ricomincia bottom range\n• Sotto range o RIR≤0 → -2,5kg\n• Altrimenti → stesso peso, +1 rep\n\n3) ALERT AUTOMATICI\n• Stallo (3 sessioni stesso peso/reps) → cambia variante o deload\n• Recovery basso (5 giorni) → riduci volume\n• Aderenza bassa (2 sett <3 sessioni) → riduci target\n• Deload week (ogni 25 sessioni)\n\n4) CORREZIONI MENSILI\nL\'app NON sostituisce esercizi automaticamente.\nOgni mese: Genera Report → condividi con Claude → review umana → modifiche scheda.'
   },
   HealthScore: {
-    title: 'Indice Salute Generale',
-    body: 'Score 0-100 composto da 4 driver evidence-based per longevità:\n\n• ADERENZA (35%)\n% sessioni completate ultime 4 settimane vs target 20.\n\n• SONNO (25%)\nMedia ore ultimi 7 giorni vs target 7.5h.\n5.5h → 0 · 7.5h → 100.\n\n• HRV (20%)\nTrend HRV vs baseline (prima misurazione). +10% → 100 · -10% → 0.\n\n• RECOVERY (20%)\nCalcolato da check-in mattutini (energia + soreness) ultimi 7 giorni.\n\nSe un componente manca, il peso si redistribuisce sugli altri.\n\nSoglie: 🟢 80-100 · 🟡 60-79 · 🔴 <60'
+    title: 'Indice Salute',
+    body: 'Un punteggio 0-100 che riflette il tuo stato rispetto ai biomarker più validati scientificamente per la longevità. A differenza di un tracker di attività, non misura quanto ti alleni ma i RISULTATI fisiologici che contano davvero: se ti alleni bene, queste metriche migliorano. I driver: VO2max (peso maggiore, è il predittore #1 di mortalità per ogni causa), HRV e FC a riposo (salute cardiovascolare e autonomica), forza di presa (biomarker dell\'invecchiamento muscolare), e qualità del sonno. Ogni metrica è confrontata con le soglie ottimali per la tua fascia d\'età e sesso, quindi il punteggio resta significativo mentre invecchi. I valori si inseriscono manualmente da Apple Health e bilancia; un\'icona ⚠️ segnala quando un dato è più vecchio di 45 giorni e andrebbe aggiornato.'
   }
 };
 
@@ -462,6 +466,60 @@ const calcAge = (birthDate) => {
   if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
   return age;
 };
+
+// Curve longevity-optimal: punti di ancoraggio [valore_metrica, score 0-100].
+// Score = percentile-per-eta. Interpolazione lineare tra punti.
+// Fonti: FRIEND registry + ACSM (vo2max), meta-analisi mortalita (hrRest, hrv), British/China studies (grip).
+const HEALTH_CURVES = {
+  vo2max: {
+    '50-59': [[25, 20], [31, 50], [38, 75], [44, 90], [50, 100]],
+    '60-69': [[22, 20], [28, 50], [34, 75], [40, 90], [46, 100]],
+    '70+': [[18, 20], [24, 50], [30, 75], [36, 90], [42, 100]]
+  },
+  hrRest: {
+    '50-59': [[48, 100], [55, 85], [62, 65], [70, 45], [80, 20], [85, 0]],
+    '60-69': [[50, 100], [57, 85], [64, 65], [72, 45], [82, 20], [87, 0]],
+    '70+': [[52, 100], [60, 85], [67, 65], [75, 45], [85, 20], [90, 0]]
+  },
+  hrv: {
+    '50-59': [[15, 15], [30, 45], [45, 65], [60, 82], [80, 100]],
+    '60-69': [[12, 15], [25, 45], [38, 65], [52, 82], [70, 100]],
+    '70+': [[10, 15], [20, 45], [32, 65], [45, 82], [60, 100]]
+  },
+  grip: {
+    '50-59': [[25, 15], [33, 45], [39, 60], [44, 78], [52, 100]],
+    '60-69': [[22, 15], [29, 45], [35, 60], [40, 78], [47, 100]],
+    '70+': [[18, 15], [24, 45], [30, 60], [35, 78], [40, 100]]
+  }
+};
+
+const getAgeBracket = (birthDate) => {
+  const age = calcAge(birthDate);
+  if (age === null) return '50-59';
+  if (age < 60) return '50-59';
+  if (age < 70) return '60-69';
+  return '70+';
+};
+
+const scoreMetric = (metricKey, value, birthDate) => {
+  const bracket = getAgeBracket(birthDate);
+  const curve = HEALTH_CURVES[metricKey]?.[bracket];
+  if (!curve || value == null || isNaN(value)) return null;
+
+  if (value <= curve[0][0]) return curve[0][1];
+  if (value >= curve[curve.length - 1][0]) return curve[curve.length - 1][1];
+
+  for (let i = 0; i < curve.length - 1; i++) {
+    const [x0, y0] = curve[i];
+    const [x1, y1] = curve[i + 1];
+    if (value >= x0 && value <= x1) {
+      return y0 + (y1 - y0) * ((value - x0) / (x1 - x0));
+    }
+  }
+  return null;
+};
+
+const HEALTH_FRESHNESS_DAYS = { default: 45, sonno: 10 };
 
 const getEffectiveHrMax = (profile) => {
   if (profile?.hrMax && profile.hrMax > 0) return { value: profile.hrMax, estimated: false };
@@ -805,11 +863,40 @@ const checkAdjustments = (history, dailyLogs, dismissedAlerts) => {
 };
 
 // ============ HEALTH SCORE ============
-const calcHealthScore = (history, measurements, dailyLogs) => {
-  const wk4 = []; for (let i = 0; i < 4; i++) { const d = new Date(); d.setDate(d.getDate() - i * 7); wk4.push(weekKey(d)); }
+const calcHealthScore = (history, measurements, dailyLogs, profile) => {
   const components = [];
-  const completed = (history.workouts || []).filter(w => wk4.includes(weekKey(new Date(w.date)))).length;
-  components.push({ key: 'aderenza', value: Math.min(100, (completed / 20) * 100), weight: 35 });
+  const birthDate = profile?.birthDate;
+
+  const getLatestMetric = (key) => {
+    const entries = (measurements || [])
+      .filter(m => m[key] != null && m[key] !== '' && !isNaN(parseDecimal(m[key])))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (entries.length === 0) return null;
+    const latest = entries[0];
+    const ageInDays = Math.floor((Date.now() - new Date(latest.date).getTime()) / (1000 * 60 * 60 * 24));
+    return { value: parseDecimal(latest[key]), date: latest.date, ageInDays };
+  };
+
+  const metricDrivers = [
+    { key: 'vo2max', weight: 37 },
+    { key: 'hrv', weight: 19 },
+    { key: 'hrRest', weight: 19 },
+    { key: 'grip', weight: 15 }
+  ];
+
+  metricDrivers.forEach(({ key, weight }) => {
+    const metric = getLatestMetric(key);
+    if (!metric) return;
+    const value = scoreMetric(key, metric.value, birthDate);
+    if (value === null) return;
+    components.push({
+      key,
+      value,
+      weight,
+      stale: metric.ageInDays > HEALTH_FRESHNESS_DAYS.default,
+      ageInDays: metric.ageInDays
+    });
+  });
 
   const last7 = Array.from({ length: 7 }, (_, i) => daysAgo(i));
   const sleepData = last7
@@ -827,23 +914,7 @@ const calcHealthScore = (history, measurements, dailyLogs) => {
       : 7;
     const qualityScore = ((avgQuality - 1) / 9) * 100;
     const sleepDriverScore = hoursScore * 0.3 + qualityScore * 0.7;
-    components.push({ key: 'sonno', value: sleepDriverScore, weight: 25 });
-  }
-
-  const hrvMeasures = (measurements || []).filter(m => m.hrv).sort((a, b) => new Date(a.date) - new Date(b.date));
-  if (hrvMeasures.length >= 2) {
-    const baseline = hrvMeasures[0].hrv;
-    const recent = hrvMeasures[hrvMeasures.length - 1].hrv;
-    const delta = ((recent - baseline) / baseline) * 100;
-    components.push({ key: 'HRV', value: Math.max(0, Math.min(100, 50 + delta * 5)), weight: 20 });
-  } else if (hrvMeasures.length === 1) {
-    components.push({ key: 'HRV', value: 50, weight: 20 });
-  }
-
-  const checkIns = last7.map(d => dailyLogs[d]?.checkIn).filter(Boolean);
-  if (checkIns.length >= 3) {
-    const avg = checkIns.reduce((a, c) => a + ((c.energy * 8) - (c.soreness * 4)), 0) / checkIns.length;
-    components.push({ key: 'recovery', value: Math.max(0, Math.min(100, avg + 20)), weight: 20 });
+    components.push({ key: 'sonno', value: sleepDriverScore, weight: 10, stale: false });
   }
 
   const totalWeight = components.reduce((a, c) => a + c.weight, 0);
@@ -1332,7 +1403,7 @@ function LongevityAppV4() {
 
   const todayCheckInDone = !!dailyLogs[todayKey()]?.checkIn;
   const todayCheckin = dailyLogs[todayKey()]?.checkIn;
-  const health = calcHealthScore(history, measurements, dailyLogs);
+  const health = calcHealthScore(history, measurements, dailyLogs, profile);
   const goals = calcGoals(profile, measurements);
   const streak = calcStreak(history);
   const prs = getPRs(history);
@@ -1403,10 +1474,11 @@ const HealthRing = ({ score, components, onGloss }) => {
   const cx = 100, cy = 100, outerR = 80, innerR = 58, outerStroke = 14, innerStroke = 8;
   const outerCirc = 2 * Math.PI * outerR;
   const scoreColor = score === null ? 'rgba(255,255,255,0.12)' : score >= 80 ? '#84cc16' : score >= 60 ? '#fbbf24' : '#ef4444';
-  const driverColors = { aderenza: '#84cc16', sonno: '#3b82f6', HRV: '#a855f7', recovery: '#f59e0b' };
-  const driverIcons = { aderenza: '💪', sonno: '😴', HRV: '💗', recovery: '⚡' };
-  const driverLabels = { aderenza: 'Aderenza', sonno: 'Sonno', HRV: 'HRV', recovery: 'Recovery' };
-  const segGap = 10, segDeg = (360 - 4 * segGap) / 4;
+  const driverColors = { vo2max: '#ef4444', hrv: '#a855f7', hrRest: '#3b82f6', grip: '#84cc16', sonno: '#6366f1' };
+  const driverIcons = { vo2max: '🫀', hrv: '💗', hrRest: '💓', grip: '✊', sonno: '😴' };
+  const driverLabels = { vo2max: 'VO2max', hrv: 'HRV', hrRest: 'FC riposo', grip: 'Forza', sonno: 'Sonno' };
+  const segCount = components.length || 1;
+  const segGap = 10, segDeg = (360 - segCount * segGap) / segCount;
   const toRad = (d) => (d * Math.PI) / 180;
   const arcPath = (r, startDeg, endDeg) => {
     const s = toRad(startDeg - 90), e = toRad(endDeg - 90);
@@ -1449,11 +1521,13 @@ const HealthRing = ({ score, components, onGloss }) => {
         </div>
       </div>
       {components.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(components.length, 3)}, 1fr)`, gap: 4, width: '100%' }}>
           {components.map(c => (
             <div key={c.key} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 15 }}>{driverIcons[c.key] || '●'}</div>
-              <div style={{ fontFamily: FONT_MONO, fontSize: FS.sm, fontWeight: 700, color: driverColors[c.key] || '#84cc16', marginTop: 2 }}>{Math.round(c.value)}</div>
+              <div title={c.stale ? `Dato vecchio di ${c.ageInDays} giorni, aggiorna` : undefined} style={{ fontFamily: FONT_MONO, fontSize: FS.sm, fontWeight: 700, color: driverColors[c.key] || '#84cc16', marginTop: 2 }}>
+                {Math.round(c.value)}{c.stale && <span style={{ color: '#f59e0b', marginLeft: 2 }}>⚠️</span>}
+              </div>
               <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: 1, lineHeight: 1.2 }}>{driverLabels[c.key] || c.key}</div>
             </div>
           ))}
@@ -1503,7 +1577,7 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
         <button onClick={onCheckIn} style={{ ...card, backgroundColor: 'rgba(132,204,22,0.1)', borderColor: 'rgba(132,204,22,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', minHeight: 44, cursor: 'pointer', textAlign: 'left', color: '#fff' }}>
           <div>
             <div style={{ color: '#84cc16', fontWeight: 600, fontSize: FS.base }}>Check-in mattutino</div>
-            <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)' }}>15 secondi · 3 slider</div>
+            <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.6)' }}>15 secondi · 4 slider</div>
           </div>
           <ChevronUp size={22} color="#84cc16" style={{ transform: 'rotate(90deg)' }} />
         </button>
@@ -3106,6 +3180,7 @@ const MeasuresTab = ({ measurements, saveMeasurements, history, onGloss, profile
     { key: 'vo2max', label: 'VO2max', unit: 'ml/kg/min', better: 'up', glossKey: 'VO2max', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.vo2max },
     { key: 'hrRest', label: 'FC riposo', unit: 'bpm', better: 'down', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.hrRest },
     { key: 'hrv', label: 'HRV', unit: 'ms', better: 'up', glossKey: 'HRV', color: COLORS.cardio, optimalRange: METRIC_OPTIMAL.hrv },
+    { key: 'grip', label: 'Forza presa', unit: 'kg', better: 'up', glossKey: 'grip strength', color: COLORS.forza },
     { key: 'bpSys', label: 'Pressione sistolica', unit: 'mmHg', better: 'down', color: COLORS.alert, optimalRange: METRIC_OPTIMAL.bpSys },
     { key: 'bpDia', label: 'Pressione diastolica', unit: 'mmHg', better: 'down', color: COLORS.alert, optimalRange: METRIC_OPTIMAL.bpDia }
   ];
