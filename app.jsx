@@ -618,15 +618,23 @@ const suggestTodayTask = (history, dailyLogs, todayCheckin, today) => {
   const doneToday = workouts.filter(w => sameDay(new Date(w.date), now));
   const doneThisWeek = workouts.filter(w => weekKey(new Date(w.date)) === weekKey(now));
   const isStrength = (taskId) => ['upper', 'lower', 'norwegian'].includes(taskId);
+  const isStrengthWorkout = (w) => isStrength(w.taskId) || (w.external && w.type === 'strength');
   const priorityOrder = (taskId) => ({ upper: 1, lower: 1, norwegian: 2, zone2: 3, movement: 4, travelStrength: 5, travelCardio: 5 }[taskId] || 99);
-  const isDoneThisWeek = (taskId) => doneThisWeek.some(w => w.taskId === taskId);
+  const isDoneThisWeek = (taskId) => doneThisWeek.some(w => {
+    if (w.taskId === taskId) return true;
+    if (w.external) {
+      if (taskId === 'zone2' && w.type === 'zone2') return true;
+      if (taskId === 'movement' && w.type === 'movement') return true;
+    }
+    return false;
+  });
 
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const dayBefore = new Date(now);
   dayBefore.setDate(dayBefore.getDate() - 2);
-  const yesterdayStrength = workouts.some(w => sameDay(new Date(w.date), yesterday) && isStrength(w.taskId));
-  const dayBeforeStrength = workouts.some(w => sameDay(new Date(w.date), dayBefore) && isStrength(w.taskId));
+  const yesterdayStrength = workouts.some(w => sameDay(new Date(w.date), yesterday) && isStrengthWorkout(w));
+  const dayBeforeStrength = workouts.some(w => sameDay(new Date(w.date), dayBefore) && isStrengthWorkout(w));
 
   const defaultToday = Object.values(TASKS).find(t => !t.travel && t.suggestedDay === today);
   const skipped = Object.values(TASKS)
@@ -1320,6 +1328,80 @@ const ConfirmModal = ({ title, body, confirmLabel, cancelLabel, extraLabel, onCo
   </div>
 );
 
+const ExternalActivityModal = ({ history, saveHistory, onClose }) => {
+  const [kind, setKind] = useState('');
+  const [name, setName] = useState('');
+  const [duration, setDuration] = useState('');
+  const [rpe, setRpe] = useState(5);
+  const [selectedDate, setSelectedDate] = useState(todayKey());
+  const kinds = [
+    { id: 'cardio', label: 'Cardio', icon: '🏃' },
+    { id: 'forza', label: 'Forza', icon: '🏋️' },
+    { id: 'hiking', label: 'Hiking', icon: '🥾' },
+    { id: 'mobilita', label: 'Yoga', icon: '🧘' }
+  ];
+  const kindToType = { cardio: 'zone2', forza: 'strength', hiking: 'zone2', mobilita: 'movement' };
+  const kindToDefaultName = { cardio: 'Cardio esterno', forza: 'Forza esterna', hiking: 'Hiking', mobilita: 'Mobilità/Yoga' };
+  const durationMin = parseInt(duration);
+  const canSave = !!kind && durationMin > 0;
+  const rpeLabel = rpe <= 3 ? 'Leggera' : rpe <= 6 ? 'Media' : rpe <= 8 ? 'Intensa' : 'Massimale';
+  const buildDate = (dateStr) => {
+    if (dateStr === todayKey()) return new Date().toISOString();
+    return new Date(`${dateStr}T12:00:00`).toISOString();
+  };
+
+  const save = async () => {
+    if (!canSave) return;
+    const workout = {
+      taskId: 'external',
+      date: buildDate(selectedDate),
+      name: name.trim() || kindToDefaultName[kind],
+      type: kindToType[kind],
+      external: true,
+      externalKind: kind,
+      durationMin,
+      rpe,
+      partial: false,
+      completionPct: 1
+    };
+    await saveHistory({ ...history, workouts: [...(history.workouts || []), workout] });
+    onClose();
+  };
+
+  return (
+    <div onClick={onClose} style={modalOverlayStyle}>
+      <div onClick={e => e.stopPropagation()} style={{ ...modalPanelStyle, maxWidth: 390 }}>
+        <h3 style={{ fontSize: FS.lg, fontWeight: 600, color: '#fff', marginBottom: 14 }}>Registra attività esterna</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
+          {kinds.map(k => {
+            const selected = kind === k.id;
+            return (
+              <button key={k.id} onClick={() => setKind(k.id)} style={{ ...btnSecondary, padding: 10, border: selected ? `1px solid ${COLORS.forza}` : '1px solid transparent', backgroundColor: selected ? 'rgba(132,204,22,0.14)' : btnSecondary.backgroundColor, color: '#fff', fontWeight: selected ? 700 : 500 }}>
+                {k.icon} {k.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Es. Nuoto in piscina" style={inputStyle} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
+            <input type="number" inputMode="numeric" min="1" value={duration} onChange={e => setDuration(e.target.value)} placeholder="Durata min" style={inputStyle} />
+            <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={compactDateInputStyle} />
+          </div>
+          <div>
+            <SliderField label="Intensità RPE" value={rpe} setValue={setRpe} min={1} max={10} step={1} />
+            <div style={{ fontSize: FS.xs, color: 'rgba(255,255,255,0.5)', marginTop: 4, textAlign: 'right' }}>{rpeLabel}</div>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 18 }}>
+          <button onClick={onClose} style={btnSecondary}>Annulla</button>
+          <TouchablePress onClick={save} disabled={!canSave} style={{ ...btnPrimary, opacity: canSave ? 1 : 0.45, cursor: canSave ? 'pointer' : 'not-allowed' }}>Salva attività</TouchablePress>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ============ MAIN ============
 function LongevityAppV4() {
   const [tab, setTab] = useState('home');
@@ -1468,7 +1550,7 @@ function LongevityAppV4() {
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: pageBottomPadding }}>
       <div key={tab} className="tab-content" style={{ maxWidth: 480, margin: '0 auto', padding: `${pageTopPadding} 16px 0` }}>
         {tab === 'home' && <HomeTab profile={profile} health={health} streak={streak} history={history} todayCheckInDone={todayCheckInDone} onCheckIn={() => setShowCheckIn(true)} onStartTask={(id) => setCurrentTask(id)} onReport={() => setShowReport(true)} onGloss={setGlossOpen} dailyLogs={dailyLogs} />}
-        {tab === 'tasks' && <TasksTab history={history} profile={profile} onGloss={setGlossOpen} onStart={(id) => setCurrentTask(id)} />}
+        {tab === 'tasks' && <TasksTab history={history} saveHistory={saveHistory} profile={profile} onGloss={setGlossOpen} onStart={(id) => setCurrentTask(id)} />}
         {tab === 'goals' && <GoalsTab goals={goals} prs={prs} history={history} onGloss={setGlossOpen} profile={profile} saveProfile={saveProfile} setTab={setTab} />}
         {tab === 'measures' && <MeasuresTab measurements={measurements} saveMeasurements={saveMeasurements} history={history} onGloss={setGlossOpen} profile={profile} setTab={setTab} />}
         {tab === 'profile' && <ProfileTab profile={profile} saveProfile={saveProfile} measurements={measurements} onReport={() => setShowReport(true)} onReset={() => setShowReset(true)} onExport={exportData} onImport={importData} onGloss={setGlossOpen} />}
@@ -1721,7 +1803,8 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
 };
 
 // ============ TASKS TAB ============
-const TasksTab = ({ history, profile, onGloss, onStart }) => {
+const TasksTab = ({ history, saveHistory, profile, onGloss, onStart }) => {
+  const [externalModalOpen, setExternalModalOpen] = useState(false);
   const wk = weekKey();
   const doneThisWeek = (history.workouts || []).filter(w => weekKey(new Date(w.date)) === wk).map(w => w.taskId);
   const standardTasks = Object.values(TASKS).filter(t => !t.travel);
@@ -1773,6 +1856,12 @@ const TasksTab = ({ history, profile, onGloss, onStart }) => {
       </div>
 
       {travelTasks.map(renderTaskCard)}
+
+      <TouchablePress onClick={() => setExternalModalOpen(true)} style={{ ...btnSecondary, width: '100%', border: '1px dashed rgba(255,255,255,0.2)', backgroundColor: 'rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6 }}>
+        + Registra attività esterna
+      </TouchablePress>
+
+      {externalModalOpen && <ExternalActivityModal history={history} saveHistory={saveHistory} onClose={() => setExternalModalOpen(false)} />}
     </div>
   );
 };
@@ -3036,11 +3125,18 @@ const RecentHistoryCard = ({ history, compact = false }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {history.workouts.slice().reverse().slice(0, compact ? 5 : 8).map((w, i) => {
           const t = TASKS[w.taskId];
+          const externalIcons = { cardio: '🏃', forza: '🏋️', hiking: '🥾', mobilita: '🧘' };
+          const workoutIcon = w.external ? externalIcons[w.externalKind] : t?.icon;
           return (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
               <div>
                 <div style={{ fontSize: FS.sm, display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span>{t?.icon} {w.name}</span>
+                  <span>{workoutIcon} {w.name}</span>
+                  {w.external && (
+                    <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(99,102,241,0.2)', color: '#6366f1', padding: '2px 8px', borderRadius: 6, marginLeft: 8 }}>
+                      Esterna · {w.durationMin}min · RPE {w.rpe}
+                    </span>
+                  )}
                   {w.partial && (
                     <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,0.2)', color: '#f59e0b', padding: '2px 8px', borderRadius: 6, marginLeft: 8 }}>
                       Parziale {Math.round((w.completionPct || 0) * 100)}%
