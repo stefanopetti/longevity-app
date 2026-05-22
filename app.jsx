@@ -1601,6 +1601,9 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
   const todayCheckIn = dailyLogs[todayKey()]?.checkIn;
   const smartSuggestion = suggestTodayTask(history, dailyLogs, todayCheckIn, today);
   const suggestedTaskToday = smartSuggestion ? TASKS[smartSuggestion.taskId] : null;
+  const doneTodayWorkout = (history.workouts || [])
+    .filter(w => sameDay(new Date(w.date), new Date()))
+    .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
   const ctxMsg = getContextualMessage(streak, coveredSlots.size, totalTasks, todayCheckIn, [], suggestedTaskToday);
 
   return (
@@ -1657,7 +1660,22 @@ const HomeTab = ({ profile, health, streak, history, todayCheckInDone, onCheckIn
 
       <div>
         <div style={{ ...label, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 2 }}>Oggi suggerito<InfoButton glossKey="OggiSuggerito" onClick={onGloss} /></div>
-        {suggestedTaskToday ? (
+        {doneTodayWorkout ? (
+          <div style={{ background: 'rgba(132,204,22,0.1)', border: `1px solid ${COLORS.forza}`, borderRadius: 16, padding: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 28 }}>✓</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: COLORS.forza, textTransform: 'uppercase' }}>Allenamento di oggi completato</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 2 }}>
+                {doneTodayWorkout.name}
+                {doneTodayWorkout.partial && (
+                  <span style={{ fontSize: 12, color: '#f59e0b', marginLeft: 6 }}>
+                    (parziale {Math.round((doneTodayWorkout.completionPct || 0) * 100)}%)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : suggestedTaskToday ? (
           <>
             <TouchablePress onClick={() => { haptic('light'); onStartTask(suggestedTaskToday.id); }} style={{ width: '100%', background: smartSuggestion.priority === 'alert' ? 'rgba(245,158,11,0.1)' : 'linear-gradient(135deg, #ffffff, #f8f8f8)', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', color: smartSuggestion.priority === 'alert' ? '#fff' : '#000', borderRadius: 20, padding: 20, textAlign: 'left', border: smartSuggestion.priority === 'alert' ? `1px solid ${COLORS.recovery}` : 'none', minHeight: 44 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
