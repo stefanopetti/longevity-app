@@ -53,6 +53,18 @@ const DEFAULT_PROFILE = {
 };
 
 const MEASURE_KEYS = ['weight', 'bodyFat', 'muscleMassKg', 'visceralFat', 'vo2max', 'hrRest', 'hrv', 'grip', 'bpSys', 'bpDia'];
+const MOVEMENT_AREAS = [
+  { key: 'cardio', label: 'Cardio', icon: '🏃' },
+  { key: 'forzaAlta', label: 'Forza parte alta', icon: '💪' },
+  { key: 'forzaBassa', label: 'Forza parte bassa', icon: '🦵' },
+  { key: 'core', label: 'Core', icon: '🎯' },
+  { key: 'mobilita', label: 'Mobilità', icon: '🦴' },
+  { key: 'equilibrio', label: 'Equilibrio', icon: '⚖️' },
+  { key: 'unilaterali', label: 'Unilaterali', icon: '↔️' },
+  { key: 'carry', label: 'Carry', icon: '🏋️' },
+  { key: 'patternComplessi', label: 'Pattern complessi', icon: '🌀' },
+  { key: 'propriocezione', label: 'Propriocezione', icon: '🦶' }
+];
 const BLOOD_FIELDS = [
   { key: 'hsCRP', label: 'hs-CRP', unit: 'mg/L' },
   { key: 'insulin', label: 'Insulina a digiuno', unit: 'µU/mL' },
@@ -795,9 +807,7 @@ const calcCompletionPct = (task, sessionData = {}) => {
   }
 
   if (task.type === 'movement') {
-    const total = task.checklist?.length || task.focus?.length || 0;
-    if (total === 0) return 0;
-    return Math.min(1, (sessionData.checklistCompleted || []).length / total);
+    return Math.min(1, (sessionData.checklistCompleted || []).length / MOVEMENT_AREAS.length);
   }
 
   return 0;
@@ -2156,17 +2166,21 @@ const ExerciseNoteButton = ({ note }) => {
 const MovementSession = ({ task, history, saveHistory, onExit }) => {
   const [notes, setNotes] = useState('');
   const [feeling, setFeeling] = useState(7);
+  const [checklistCompleted, setChecklistCompleted] = useState([]);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const sessionStartTimeRef = useRef(Date.now());
   const getElapsedSeconds = () => Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
+  const toggleArea = (key) => {
+    setChecklistCompleted(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
   const saveSession = async (isPartial = false) => {
     const elapsedSeconds = getElapsedSeconds();
-    const completionPct = calcCompletionPct(task, { elapsedSeconds, checklistCompleted: [] });
-    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, notes, feeling, type: 'movement', partial: isPartial, completionPct, elapsedSeconds };
+    const completionPct = calcCompletionPct(task, { elapsedSeconds, checklistCompleted });
+    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, notes, feeling, type: 'movement', checklistCompleted, partial: isPartial, completionPct, elapsedSeconds };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     onExit();
   };
-  const buildSessionData = () => ({ elapsedSeconds: getElapsedSeconds(), checklistCompleted: [] });
+  const buildSessionData = () => ({ elapsedSeconds: getElapsedSeconds(), checklistCompleted });
   const handleExitRequest = () => {
     if (getElapsedSeconds() < SESSION_MIN_SECONDS) {
       onExit();
@@ -2186,19 +2200,46 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
         <h1 style={{ fontSize: FS['2xl'], fontWeight: 300, marginBottom: 4 }}>{task.icon} {task.name}</h1>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 20 }}>60 minuti con il PT</div>
 
-        <div style={{ ...cardLarge, backgroundColor: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.3)', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, color: '#a855f7', fontSize: FS.base, marginBottom: 12 }}>🎯 Focus della sessione</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {task.focus.map((f, i) => <div key={i} style={sessionInstructionStyle}>{f}</div>)}
-          </div>
-        </div>
-
         <div style={{ ...card, backgroundColor: 'rgba(132,204,22,0.08)', borderColor: 'rgba(132,204,22,0.2)', marginBottom: 16 }}>
           <div style={{ fontSize: FS.xs, color: '#84cc16', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>Tip per il PT</div>
           <div style={sessionInstructionStyle}>{task.tipForPT}</div>
         </div>
 
         <div style={{ ...cardLarge, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: 4 }}>
+              Aree coperte oggi
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10 }}>
+              Spunta le aree che hai allenato ({checklistCompleted.length}/10)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+              {MOVEMENT_AREAS.map(area => {
+                const active = checklistCompleted.includes(area.key);
+                return (
+                  <TouchablePress
+                    key={area.key}
+                    onClick={() => toggleArea(area.key)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '10px 12px',
+                      borderRadius: 10,
+                      border: active ? `1px solid ${COLORS.movement}` : '1px solid rgba(255,255,255,0.1)',
+                      background: active ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.03)',
+                      fontSize: 13,
+                      color: active ? '#fff' : 'rgba(255,255,255,0.7)'
+                    }}
+                  >
+                    <span>{area.icon}</span>
+                    <span>{area.label}</span>
+                    {active && <span style={{ marginLeft: 'auto' }}>✓</span>}
+                  </TouchablePress>
+                );
+              })}
+            </div>
+          </div>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: FS.sm, marginBottom: 8 }}>
               <span style={{ color: 'rgba(255,255,255,0.7)' }}>Sensazione sessione</span>
