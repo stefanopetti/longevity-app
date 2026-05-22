@@ -687,6 +687,45 @@ const calculateNextLoad = (exercise, lastSession, todayCheckin) => {
   };
 };
 
+const calcCompletionPct = (task, sessionData = {}) => {
+  if (task.type === 'strength' || task.id === 'travelStrength') {
+    const totalSets = task.exercises?.reduce((sum, ex) => sum + (ex.sets || 3), 0) || 0;
+    if (totalSets === 0) return 0;
+    const completedSets = (sessionData.exercises || []).reduce((sum, ex) => {
+      const taskExercise = task.exercises?.find(tEx => tEx.name === ex.name);
+      const repsRange = ex.repsRange || taskExercise?.repsRange;
+      const targetReps = repsRange?.[1] ?? repsRange?.[0] ?? 0;
+      return sum + (ex.sets || []).filter(s => {
+        const actualReps = parseInt(s.reps) || 0;
+        return targetReps > 0 && actualReps >= targetReps;
+      }).length;
+    }, 0);
+    return Math.min(1, completedSets / totalSets);
+  }
+
+  if (task.id === 'norwegian') {
+    return Math.min(1, (sessionData.roundsCompleted || 0) / 5);
+  }
+
+  if (task.type === 'cardio' || task.type === 'zone2' || task.type === 'hiit' || task.id === 'travelCardio') {
+    const structure = sessionData.structure || task.structure || [];
+    const targetSec = structure.reduce((sum, p) => sum + (p.duration || 0), 0);
+    if (targetSec === 0) return 0;
+    return Math.min(1, (sessionData.elapsedSeconds || 0) / targetSec);
+  }
+
+  if (task.type === 'movement') {
+    const total = task.checklist?.length || task.focus?.length || 0;
+    if (total === 0) return 0;
+    return Math.min(1, (sessionData.checklistCompleted || []).length / total);
+  }
+
+  return 0;
+};
+
+const SESSION_MIN_SECONDS = 300;
+const COMPLETION_THRESHOLD = 0.6;
+
 // ============ AUTO-ADJUSTMENT ENGINE ============
 // Analizza pattern e propone alert quando serve aggiustare
 const checkAdjustments = (history, dailyLogs, dismissedAlerts) => {
@@ -1155,12 +1194,13 @@ const AdjustmentAlertModal = ({ alert, onDismiss }) => {
   );
 };
 
-const ConfirmModal = ({ title, body, confirmLabel, cancelLabel, onConfirm, onCancel }) => (
+const ConfirmModal = ({ title, body, confirmLabel, cancelLabel, extraLabel, onConfirm, onCancel, onExtra }) => (
   <div onClick={onCancel} style={modalOverlayStyle}>
     <div onClick={e => e.stopPropagation()} style={{ ...modalPanelStyle, maxWidth: 360 }}>
       <h3 style={{ fontSize: FS.lg, fontWeight: 600, color: '#fff', marginBottom: 10 }}>{title}</h3>
       <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.8)', lineHeight: 1.5, marginBottom: 18 }}>{body}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: extraLabel ? '1fr' : 'repeat(2, 1fr)', gap: 10 }}>
+        {extraLabel && <button onClick={onExtra} style={{ ...btnSecondary, padding: 12 }}>{extraLabel}</button>}
         <button onClick={onCancel} style={{ ...btnSecondary, padding: 12 }}>{cancelLabel}</button>
         <TouchablePress onClick={onConfirm} style={{ ...btnPrimary, padding: 12 }}>{confirmLabel}</TouchablePress>
       </div>
@@ -1636,7 +1676,10 @@ const StrengthSession = ({ task, history, saveHistory, todayCheckin, onExit, onG
   const [restActive, setRestActive] = useState(false);
   const [sessionFeeling, setSessionFeeling] = useState(5);
   const [prModal, setPrModal] = useState(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const restRef = useRef(null);
+  const sessionStartTimeRef = useRef(Date.now());
+  const getElapsedSeconds = () => Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
 
   useEffect(() => {
     if (restActive && restRemaining > 0) restRef.current = setTimeout(() => setRestRemaining(r => r - 1), 1000);
@@ -1662,8 +1705,19 @@ const StrengthSession = ({ task, history, saveHistory, todayCheckin, onExit, onG
   const startRest = (sec) => { setRestRemaining(sec); setRestActive(true); playBeep(660, 100, 0.3); };
   const skipRest = () => { setRestActive(false); setRestRemaining(0); clearTimeout(restRef.current); };
 
-  const saveSession = async () => {
-    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, exercises: exercises.map(ex => ({ name: ex.name, sets: ex.sets.map(s => ({ weight: s.weight, reps: s.reps, rir: s.rir })) })), feeling: sessionFeeling };
+  const saveSession = async (isPartial = false) => {
+    const elapsedSeconds = getElapsedSeconds();
+    const completionPct = calcCompletionPct(task, { exercises });
+    const w = {
+      taskId: task.id,
+      date: new Date().toISOString(),
+      name: task.name,
+      exercises: exercises.map(ex => ({ name: ex.name, sets: ex.sets.map(s => ({ weight: s.weight, reps: s.reps, rir: s.rir })) })),
+      feeling: sessionFeeling,
+      partial: isPartial,
+      completionPct,
+      elapsedSeconds
+    };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     const newPR = checkNewPR(history, w);
     if (newPR) {
@@ -1672,12 +1726,25 @@ const StrengthSession = ({ task, history, saveHistory, todayCheckin, onExit, onG
       onExit();
     }
   };
+  const buildSessionData = () => ({ exercises });
+  const handleExitRequest = () => {
+    if (getElapsedSeconds() < SESSION_MIN_SECONDS) {
+      onExit();
+      return;
+    }
+    const completionPct = calcCompletionPct(task, buildSessionData());
+    if (completionPct >= COMPLETION_THRESHOLD) {
+      saveSession(false);
+      return;
+    }
+    setExitConfirmOpen(true);
+  };
 
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
       <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
+          <button onClick={handleExitRequest} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
           <div style={label}>{task.icon}</div>
         </div>
         <h1 style={{ fontSize: FS['2xl'], fontWeight: 300, marginBottom: 4 }}>{task.name}</h1>
@@ -1793,6 +1860,18 @@ const StrengthSession = ({ task, history, saveHistory, todayCheckin, onExit, onG
           <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.4)', marginTop: 16 }}>Tap ovunque per saltare</div>
         </div>
       )}
+      {exitConfirmOpen && (
+        <ConfirmModal
+          title="Sessione incompleta"
+          body={`Hai completato circa il ${Math.round(calcCompletionPct(task, buildSessionData()) * 100)}% della sessione. Vuoi salvarla come parziale?`}
+          confirmLabel="Salva parziale"
+          cancelLabel="Scarta"
+          extraLabel="Annulla"
+          onConfirm={() => { setExitConfirmOpen(false); saveSession(true); }}
+          onCancel={() => { setExitConfirmOpen(false); onExit(); }}
+          onExtra={() => setExitConfirmOpen(false)}
+        />
+      )}
       <PRCelebrationModal pr={prModal} onExit={onExit} />
     </div>
   );
@@ -1855,15 +1934,33 @@ const ExerciseNoteButton = ({ note }) => {
 const MovementSession = ({ task, history, saveHistory, onExit }) => {
   const [notes, setNotes] = useState('');
   const [feeling, setFeeling] = useState(7);
-  const saveSession = async () => {
-    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, notes, feeling, type: 'movement' };
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const sessionStartTimeRef = useRef(Date.now());
+  const getElapsedSeconds = () => Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
+  const saveSession = async (isPartial = false) => {
+    const elapsedSeconds = getElapsedSeconds();
+    const completionPct = calcCompletionPct(task, { elapsedSeconds, checklistCompleted: [] });
+    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, notes, feeling, type: 'movement', partial: isPartial, completionPct, elapsedSeconds };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     onExit();
+  };
+  const buildSessionData = () => ({ elapsedSeconds: getElapsedSeconds(), checklistCompleted: [] });
+  const handleExitRequest = () => {
+    if (getElapsedSeconds() < SESSION_MIN_SECONDS) {
+      onExit();
+      return;
+    }
+    const completionPct = calcCompletionPct(task, buildSessionData());
+    if (completionPct >= COMPLETION_THRESHOLD) {
+      saveSession(false);
+      return;
+    }
+    setExitConfirmOpen(true);
   };
   return (
     <div style={{ ...APP_STYLE, minHeight: '100vh', paddingBottom: screenBottomPadding }}>
       <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px 0` }}>
-        <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, marginBottom: 16, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
+        <button onClick={handleExitRequest} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, marginBottom: 16, minHeight: 44, cursor: 'pointer' }}>← Esci</button>
         <h1 style={{ fontSize: FS['2xl'], fontWeight: 300, marginBottom: 4 }}>{task.icon} {task.name}</h1>
         <div style={{ fontSize: FS.sm, color: 'rgba(255,255,255,0.5)', marginBottom: 20 }}>60 minuti con il PT</div>
 
@@ -1895,6 +1992,18 @@ const MovementSession = ({ task, history, saveHistory, onExit }) => {
 
         <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ ...btnPrimary, marginTop: 16, backgroundColor: '#a855f7', color: '#fff' }}>Chiudi sessione ✓</TouchablePress>
       </div>
+      {exitConfirmOpen && (
+        <ConfirmModal
+          title="Sessione incompleta"
+          body={`Hai completato circa il ${Math.round(calcCompletionPct(task, buildSessionData()) * 100)}% della sessione. Vuoi salvarla come parziale?`}
+          confirmLabel="Salva parziale"
+          cancelLabel="Scarta"
+          extraLabel="Annulla"
+          onConfirm={() => { setExitConfirmOpen(false); saveSession(true); }}
+          onCancel={() => { setExitConfirmOpen(false); onExit(); }}
+          onExtra={() => setExitConfirmOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -1911,11 +2020,17 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
   const [backgroundAlertOpen, setBackgroundAlertOpen] = useState(false);
   const [backgroundAlertData, setBackgroundAlertData] = useState(null);
   const [backgroundEndModalOpen, setBackgroundEndModalOpen] = useState(false);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [roundsCompleted, setRoundsCompleted] = useState(0);
   const [hrAvg, setHrAvg] = useState('');
   const [feeling, setFeeling] = useState(5);
   const tickRef = useRef(null);
   const advancingRef = useRef(false);
+  const sessionStartTimeRef = useRef(null);
   const currentPhase = task.structure[phaseIdx];
+  const getElapsedSeconds = () => sessionStartTimeRef.current
+    ? Math.floor((Date.now() - sessionStartTimeRef.current) / 1000)
+    : 0;
 
   const computeSecondsLeft = () => {
     if (!phaseStartTime) return task.structure[phaseIdx].duration;
@@ -1934,6 +2049,10 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
   const advancePhase = () => {
     if (advancingRef.current) return;
     advancingRef.current = true;
+
+    if (task.id === 'norwegian' && currentPhase.intense) {
+      setRoundsCompleted(r => r + 1);
+    }
 
     if (phaseIdx < task.structure.length - 1) {
       const ni = phaseIdx + 1;
@@ -2014,10 +2133,25 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [running, phaseStartTime, phaseIdx, accumulatedPause, task.structure]);
 
-  const saveSession = async () => {
-    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, hrAvg, feeling, type: task.type };
+  const saveSession = async (isPartial = false) => {
+    const elapsedSeconds = getElapsedSeconds();
+    const completionPct = calcCompletionPct(task, { elapsedSeconds, roundsCompleted, structure: task.structure });
+    const w = { taskId: task.id, date: new Date().toISOString(), name: task.name, hrAvg, feeling, type: task.type, partial: isPartial, completionPct, elapsedSeconds };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     onExit();
+  };
+  const buildSessionData = () => ({ elapsedSeconds: getElapsedSeconds(), roundsCompleted, structure: task.structure });
+  const handleExitRequest = () => {
+    if (getElapsedSeconds() < SESSION_MIN_SECONDS) {
+      onExit();
+      return;
+    }
+    const completionPct = calcCompletionPct(task, buildSessionData());
+    if (completionPct >= COMPLETION_THRESHOLD) {
+      saveSession(false);
+      return;
+    }
+    setExitConfirmOpen(true);
   };
   const handleEndSession = async () => {
     await saveSession();
@@ -2031,6 +2165,7 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
       return;
     }
     if (!phaseStartTime) {
+      if (!sessionStartTimeRef.current) sessionStartTimeRef.current = Date.now();
       startPhaseTimer();
     } else if (pausedAt) {
       setAccumulatedPause(prev => prev + (Date.now() - pausedAt));
@@ -2068,7 +2203,7 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
     <div style={{ ...APP_STYLE, minHeight: '100vh' }}>
       <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px ${screenBottomPadding}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
+          <button onClick={handleExitRequest} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
           <div style={label}>{task.icon}</div>
         </div>
         <h1 style={{ fontSize: FS['2xl'], fontWeight: 300, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -2135,6 +2270,18 @@ const CardioSession = ({ task, history, saveHistory, profile, onExit, onGloss })
           onCancel={() => setSkipConfirmOpen(false)}
         />
       )}
+      {exitConfirmOpen && (
+        <ConfirmModal
+          title="Sessione incompleta"
+          body={`Hai completato circa il ${Math.round(calcCompletionPct(task, buildSessionData()) * 100)}% della sessione. Vuoi salvarla come parziale?`}
+          confirmLabel="Salva parziale"
+          cancelLabel="Scarta"
+          extraLabel="Annulla"
+          onConfirm={() => { setExitConfirmOpen(false); saveSession(true); }}
+          onCancel={() => { setExitConfirmOpen(false); onExit(); }}
+          onExtra={() => setExitConfirmOpen(false)}
+        />
+      )}
       {backgroundAlertOpen && backgroundAlertData && (
         <ConfirmModal
           title="Sessione interrotta"
@@ -2196,7 +2343,12 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
   const [running, setRunning] = useState(false);
   const [hrAvg, setHrAvg] = useState('');
   const [feeling, setFeeling] = useState(5);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const tickRef = useRef(null);
+  const sessionStartTimeRef = useRef(null);
+  const getElapsedSeconds = () => sessionStartTimeRef.current
+    ? Math.floor((Date.now() - sessionStartTimeRef.current) / 1000)
+    : 0;
 
   // Walk: warm 3min + cammino veloce 25min + cool 2min = 30min, conta come Zone 2
   const walkStructure = [
@@ -2240,12 +2392,31 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
     return () => clearTimeout(tickRef.current);
   }, [running, secondsLeft, phaseIdx]);
 
-  const saveSession = async () => {
+  const saveSession = async (isPartial = false) => {
     // Travel walk conta come zone2, tabata come hiit (per aderenza e report)
     const equivalentType = mode === 'walk' ? 'zone2' : 'hiit';
-    const w = { taskId: task.id, date: new Date().toISOString(), name: `${task.name} (${mode === 'walk' ? 'Camminata' : 'Tabata'})`, hrAvg, feeling, type: equivalentType, travel: true, mode };
+    const elapsedSeconds = getElapsedSeconds();
+    const completionPct = calcCompletionPct(task, { elapsedSeconds, structure });
+    const w = { taskId: task.id, date: new Date().toISOString(), name: `${task.name} (${mode === 'walk' ? 'Camminata' : 'Tabata'})`, hrAvg, feeling, type: equivalentType, travel: true, mode, partial: isPartial, completionPct, elapsedSeconds };
     await saveHistory({ ...history, workouts: [...(history.workouts || []), w] });
     onExit();
+  };
+  const handleToggleRunning = () => {
+    if (!running && !sessionStartTimeRef.current) sessionStartTimeRef.current = Date.now();
+    setRunning(r => !r);
+  };
+  const buildSessionData = () => ({ elapsedSeconds: getElapsedSeconds(), structure });
+  const handleExitRequest = () => {
+    if (getElapsedSeconds() < SESSION_MIN_SECONDS) {
+      onExit();
+      return;
+    }
+    const completionPct = calcCompletionPct(task, buildSessionData());
+    if (completionPct >= COMPLETION_THRESHOLD) {
+      saveSession(false);
+      return;
+    }
+    setExitConfirmOpen(true);
   };
 
   // SCELTA MODE
@@ -2283,7 +2454,7 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
     <div style={{ ...APP_STYLE, minHeight: '100vh' }}>
       <div style={{ maxWidth: 480, margin: '0 auto', padding: `${screenTopPadding} 16px ${screenBottomPadding}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <button onClick={onExit} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
+          <button onClick={handleExitRequest} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: FS.sm, minHeight: 44, minWidth: 44, cursor: 'pointer' }}>← Esci</button>
           <div style={label}>{task.icon}</div>
         </div>
         <h1 style={{ fontSize: FS['2xl'], fontWeight: 300 }}>{mode === 'walk' ? '🚶 Camminata' : '🔥 Tabata'}</h1>
@@ -2301,7 +2472,7 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
-          <TouchablePress onClick={() => { haptic('light'); setRunning(r => !r); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
+          <TouchablePress onClick={() => { haptic('light'); handleToggleRunning(); }} style={{ ...btnPrimary, backgroundColor: running ? 'rgba(255,255,255,0.1)' : '#84cc16', color: running ? '#fff' : '#000', padding: 16 }}>
             {running ? <><Pause size={20} fill="currentColor" /> Pausa</> : <><Play size={20} fill="currentColor" /> Avvia</>}
           </TouchablePress>
           <button onClick={() => { if (phaseIdx < structure.length - 1) { const ni = phaseIdx + 1; setPhaseIdx(ni); setSecondsLeft(structure[ni].duration); } }} style={{ ...btnSecondary, padding: 16 }}>Salta fase →</button>
@@ -2321,6 +2492,18 @@ const TravelCardioSession = ({ task, history, saveHistory, onExit }) => {
 
         <TouchablePress onClick={() => { haptic('medium'); saveSession(); }} style={{ ...btnPrimary, marginTop: 16 }}>Chiudi sessione ✓</TouchablePress>
       </div>
+      {exitConfirmOpen && (
+        <ConfirmModal
+          title="Sessione incompleta"
+          body={`Hai completato circa il ${Math.round(calcCompletionPct(task, buildSessionData()) * 100)}% della sessione. Vuoi salvarla come parziale?`}
+          confirmLabel="Salva parziale"
+          cancelLabel="Scarta"
+          extraLabel="Annulla"
+          onConfirm={() => { setExitConfirmOpen(false); saveSession(true); }}
+          onCancel={() => { setExitConfirmOpen(false); onExit(); }}
+          onExtra={() => setExitConfirmOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -2723,7 +2906,14 @@ const RecentHistoryCard = ({ history, compact = false }) => {
           return (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
               <div>
-                <div style={{ fontSize: FS.sm }}>{t?.icon} {w.name}</div>
+                <div style={{ fontSize: FS.sm, display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span>{t?.icon} {w.name}</span>
+                  {w.partial && (
+                    <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,0.2)', color: '#f59e0b', padding: '2px 8px', borderRadius: 6, marginLeft: 8 }}>
+                      Parziale {Math.round((w.completionPct || 0) * 100)}%
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: FS.tiny, color: 'rgba(255,255,255,0.4)' }}>{new Date(w.date).toLocaleDateString('it-IT')}</div>
               </div>
               <Check size={18} color={t?.color || '#84cc16'} />
